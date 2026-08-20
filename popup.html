@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>AICheatCode</title>
+<link rel="stylesheet" href="panel.css">
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+
+<header class="app-header">
+  <div class="brand">
+    <div class="logo">▶</div>
+    <div>
+      <div class="title">AICheatCode</div>
+      <div class="subtitle">Google Flow 自动化 · 免费自托管版</div>
+    </div>
+  </div>
+  <span id="conn" class="badge conn">连接中…</span>
+</header>
+
+<div class="plan">
+  <div class="plan-pill">
+    <span class="tag">免费版</span>
+    <span class="note">无需登录 · 本地运行</span>
+  </div>
+</div>
+
+<section style="padding:6px 14px 0">
+  <div class="section-title">生成模式</div>
+  <div class="modes" id="modes">
+    <button class="mode-chip" data-mode="text2video"><span class="ic">🎬</span>文生视频</button>
+    <button class="mode-chip soon" data-mode="frame2video"><span class="ic">🖼️</span>图生视频<span class="soon-tag">即将支持</span></button>
+    <button class="mode-chip soon" data-mode="ingredients"><span class="ic">🧩</span>成分动画<span class="soon-tag">即将支持</span></button>
+    <button class="mode-chip active" data-mode="text2img"><span class="ic">🎨</span>文生图</button>
+    <button class="mode-chip" data-mode="img2img"><span class="ic">🔄</span>图生图</button>
+    <button class="mode-chip soon" data-mode="agent"><span class="ic">🤖</span>Agent<span class="soon-tag">即将支持</span></button>
+  </div>
+  <input type="hidden" id="mode" value="text2img">
+  <div class="mode-note" id="modeNote"></div>
+
+  <div class="section-title">提示词</div>
+  <textarea id="prompts" rows="5" placeholder="每行一条，空行分隔多条：&#10;一只戴帽子的猫，水彩风格&#10;&#10;赛博朋克城市夜景"></textarea>
+  <div class="file-row">
+    <button id="uploadTxt" class="ghost sm">上传 .txt</button>
+    <button id="uploadCsv" class="ghost sm">上传 .csv</button>
+    <input type="file" id="fileInput" accept=".txt,.csv" hidden>
+  </div>
+
+  <div class="field-row">
+    <label class="field grow">保存文件夹
+      <input id="folder" type="text" placeholder="留空=默认目录">
+    </label>
+    <label class="check" style="padding-bottom:8px"><input id="autoRename" type="checkbox" checked> 自动重命名</label>
+  </div>
+
+  <details class="opts" open>
+    <summary>生成选项</summary>
+    <div class="opt-grid">
+      <label class="field">画幅比例
+        <select id="aspectRatio">
+          <option value="">不指定</option>
+          <option value="16:9">16:9（横）</option>
+          <option value="9:16">9:16（竖）</option>
+          <option value="1:1">1:1（方）</option>
+          <option value="3:4">3:4</option>
+          <option value="4:3">4:3</option>
+        </select>
+      </label>
+      <label class="field">每条数量
+        <input id="count" type="number" min="1" max="8" value="1">
+      </label>
+      <label class="field">视频模型
+        <select id="videoModel">
+          <option value="">不指定</option>
+          <option value="Veo 3.1 - Lite">Veo 3.1 - Lite</option>
+          <option value="Veo 3.1 - Fast">Veo 3.1 - Fast</option>
+          <option value="Veo 3.1 - Quality">Veo 3.1 - Quality</option>
+          <option value="Omni Flash">Omni Flash</option>
+        </select>
+      </label>
+      <label class="field">图片模型
+        <select id="imageModel">
+          <option value="">不指定</option>
+          <option value="Nano Banana 2 Lite">Nano Banana 2 Lite</option>
+          <option value="Nano Banana Pro">Nano Banana Pro</option>
+          <option value="Nano Banana 2">Nano Banana 2</option>
+        </select>
+      </label>
+      <label class="field">视频时长
+        <select id="duration">
+          <option value="">不指定</option>
+          <option value="4s">4 秒</option>
+          <option value="6s">6 秒</option>
+          <option value="8s">8 秒</option>
+          <option value="10s">10 秒</option>
+          <option value="concat">Concat</option>
+        </select>
+      </label>
+      <label class="field">并行标签页
+        <input id="concurrency" type="number" min="1" max="4" value="1">
+      </label>
+      <label class="field">随机延迟(秒)
+        <input id="randomDelay" type="number" min="0" max="60" value="3">
+      </label>
+      <label class="field">最大重试
+        <input id="maxRetries" type="number" min="0" max="20" value="3">
+      </label>
+    </div>
+    <label class="check" style="margin:2px 0 6px"><input id="newProject" type="checkbox" checked> 每条新建项目</label>
+  </details>
+
+  <div class="row">
+    <button id="start" class="primary">运行 ▶</button>
+    <button id="stop" class="danger" disabled>停止</button>
+  </div>
+  <div class="row alt">
+    <button id="openPanel" class="ghost sm">侧边栏监控</button>
+    <span id="status" class="status" style="flex:1;margin-top:0">就绪</span>
+  </div>
+
+  <div class="section-title">进度</div>
+  <ul id="list" class="queue"><li class="empty">暂无任务</li></ul>
+</section>
+
+<script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>AICheatCode · 控制面板</title>
+<link rel="stylesheet" href="panel.css">
+</head>
+<body>
+
+<header class="app-header">
+  <div class="brand">
+    <div class="logo">▶</div>
+    <div>
+      <div class="title" data-i18n="app.title">AICheatCode</div>
+      <div class="subtitle" data-i18n="app.subtitle">Google Flow 自动化 · 免费自托管版</div>
+    </div>
+  </div>
+  <span id="conn" class="badge conn" data-i18n="conn.connecting">连接中…</span>
+  <button id="copyPageDiag" class="badge diag-btn" data-i18n-title="diag.title" data-i18n="diag.btn">🔍 复制页面诊断</button>
+  <select id="langSel" class="badge lang-sel" title="Language / 语言">
+    <option value="zh">中文</option>
+    <option value="en">English</option>
+  </select>
+</header>
+
+<div class="plan">
+  <div class="plan-pill">
+    <span class="tag" data-i18n="plan.tag">免费版</span>
+    <span class="note" data-i18n="plan.note">无需登录 · 本地运行</span>
+  </div>
+</div>
+
+<nav class="tabs">
+  <button class="tab active" data-tab="control" data-i18n="tab.control">控制</button>
+  <button class="tab" data-tab="settings" data-i18n="tab.settings">设置</button>
+</nav>
+
+<main>
+  <!-- ============ 控制页 ============ -->
+  <section id="tab-control" class="tab-pane active">
+
+    <div class="section-title" data-i18n="sec.mode">生成模式</div>
+    <div class="modes" id="modes">
+      <button class="mode-chip" data-mode="text2video"><span class="ic">🎬</span><span data-i18n="mode.text2video">文生视频</span></button>
+      <button class="mode-chip" data-mode="frame2video"><span class="ic">🖼️</span><span data-i18n="mode.frame2video">图生视频</span></button>
+      <button class="mode-chip" data-mode="ingredients"><span class="ic">🧩</span><span data-i18n="mode.ingredients">成分动画</span></button>
+      <button class="mode-chip active" data-mode="text2img"><span class="ic">🎨</span><span data-i18n="mode.text2img">文生图</span></button>
+      <button class="mode-chip" data-mode="img2img"><span class="ic">🔄</span><span data-i18n="mode.img2img">图生图</span></button>
+      <button class="mode-chip soon" data-mode="agent"><span class="ic">🤖</span><span data-i18n="mode.agent">Agent</span><span class="soon-tag" data-i18n="soon.tag">即将支持</span></button>
+    </div>
+    <input type="hidden" id="mode" value="text2img">
+    <div class="mode-note" id="modeNote"></div>
+
+    <div class="section-title" data-i18n="sec.prompts">提示词</div>
+    <textarea id="prompts" rows="6" data-i18n-ph="prompts.ph" placeholder="每行一条提示词（可直接粘贴多行，或导入 .txt/.csv）：&#10;一只戴帽子的猫，水彩风格&#10;赛博朋克城市夜景，霓虹灯"></textarea>
+    <div class="file-row">
+      <button id="uploadTxt" class="ghost sm" data-i18n="upload.txt">上传 .txt</button>
+      <button id="uploadCsv" class="ghost sm" data-i18n="upload.csv">上传 .csv</button>
+      <input type="file" id="fileInput" accept=".txt,.csv" hidden>
+      <span class="hint-inline" data-i18n="hint.import">支持从文件批量导入提示词</span>
+    </div>
+
+    <div class="section-title"><span data-i18n="sec.assets">素材图片</span> <span class="hint-inline" data-i18n="assets.hint">（图生视频=起始图 1 张；成分动画=角色/组件图 多张）</span></div>
+    <div class="file-row">
+      <button id="pickImages" class="ghost sm" data-i18n="pick.images">选择图片…</button>
+      <button id="clearImages" class="ghost sm" data-i18n="clear">清空</button>
+      <input id="imageInput" type="file" accept="image/*" multiple hidden>
+    </div>
+    <div id="assetList" class="asset-list"></div>
+
+    <div class="field-row">
+      <label class="field grow"><span data-i18n="folder.label">保存文件夹（留空=默认下载目录）</span>
+        <input id="folder" type="text" data-i18n-ph="folder.ph" placeholder="例如 my-project">
+      </label>
+      <label class="check" style="padding-bottom:8px">
+        <input id="autoRename" type="checkbox" checked> <span data-i18n="autorename">自动重命名</span>
+      </label>
+    </div>
+
+    <div class="row">
+      <button id="start" class="primary" data-i18n="run">运行 ▶</button>
+      <button id="stop" class="danger" disabled data-i18n="stop">停止</button>
+    </div>
+    <div id="status" class="status" data-i18n="status.ready">就绪。先打开并登录 Google Flow 项目页。</div>
+
+    <div class="section-title" data-i18n="sec.queue">提示词队列</div>
+    <ul id="list" class="queue"><li class="empty" data-i18n="queue.empty">暂无任务</li></ul>
+  </section>
+
+  <!-- ============ 设置页 ============ -->
+  <section id="tab-settings" class="tab-pane">
+
+    <div class="card">
+      <h3 data-i18n="set.general">通用</h3>
+      <div class="grid2">
+        <label class="field"><span data-i18n="opt.mode">默认模式</span>
+          <select id="setMode">
+            <option value="text2video" data-i18n="mode.text2video">文生视频</option>
+            <option value="frame2video" data-i18n="mode.frame2video">图生视频</option>
+            <option value="ingredients" data-i18n="mode.ingredients">成分动画</option>
+            <option value="text2img" selected data-i18n="mode.text2img">文生图</option>
+            <option value="img2img" data-i18n="mode.img2img">图生图</option>
+          </select>
+        </label>
+        <label class="field"><span data-i18n="opt.aspect">画幅比例</span>
+          <select id="aspectRatio">
+            <option value="" data-i18n="aspect.default">不指定（用 Flow 默认）</option>
+            <option value="16:9" data-i18n="aspect.169">16:9（横）</option>
+            <option value="9:16" data-i18n="aspect.916">9:16（竖）</option>
+            <option value="1:1" data-i18n="aspect.11">1:1（方）</option>
+            <option value="3:4" data-i18n="aspect.34">3:4</option>
+            <option value="4:3" data-i18n="aspect.43">4:3</option>
+          </select>
+        </label>
+        <label class="field"><span data-i18n="opt.count">每条数量</span>
+          <input id="count" type="number" min="1" max="8" value="1">
+        </label>
+        <label class="field"><span data-i18n="opt.concurrency">并行标签页</span>
+          <input id="concurrency" type="number" min="1" max="4" value="1">
+        </label>
+        <label class="field"><span data-i18n="opt.randdelay">随机延迟(秒)</span>
+          <input id="randomDelay" type="number" min="0" max="60" value="3">
+        </label>
+        <label class="field"><span data-i18n="opt.faildelay">失败间隔(秒)</span>
+          <input id="delay" type="number" min="0" max="60" value="4">
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 data-i18n="set.model">模型</h3>
+      <div class="grid2">
+        <label class="field"><span data-i18n="opt.vmodel">视频模型</span>
+          <select id="videoModel">
+            <option value="" data-i18n="vmodel.default">不指定（Flow 默认）</option>
+            <option value="Veo 3.1 - Lite">Veo 3.1 - Lite</option>
+            <option value="Veo 3.1 - Fast">Veo 3.1 - Fast</option>
+            <option value="Veo 3.1 - Quality">Veo 3.1 - Quality</option>
+            <option value="Omni Flash">Omni Flash</option>
+          </select>
+        </label>
+        <label class="field"><span data-i18n="opt.imodel">图片模型</span>
+          <select id="imageModel">
+            <option value="" data-i18n="imodel.default">不指定（Flow 默认）</option>
+            <option value="Nano Banana 2 Lite">Nano Banana 2 Lite</option>
+            <option value="Nano Banana Pro">Nano Banana Pro</option>
+            <option value="Nano Banana 2">Nano Banana 2</option>
+          </select>
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 data-i18n="set.modeopt">模式专项</h3>
+      <div class="grid2">
+        <label class="field"><span data-i18n="opt.duration">视频时长</span>
+          <select id="duration">
+            <option value="" data-i18n="dur.default">不指定</option>
+            <option value="4s" data-i18n="dur.4s">4 秒</option>
+            <option value="6s" data-i18n="dur.6s">6 秒</option>
+            <option value="8s" data-i18n="dur.8s">8 秒</option>
+            <option value="10s" data-i18n="dur.10s">10 秒</option>
+            <option value="concat" data-i18n="dur.concat">Concat（拼接）</option>
+          </select>
+        </label>
+        <label class="field"><span data-i18n="opt.imagemode">图片模式</span>
+          <select id="imageMode">
+            <option value="new" data-i18n="imagemode.new">新图</option>
+            <option value="last" data-i18n="imagemode.last">沿用上一张</option>
+          </select>
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 data-i18n="set.download">下载与高级</h3>
+      <div class="grid2">
+        <label class="field"><span data-i18n="opt.retries">最大重试</span>
+          <input id="maxRetries" type="number" min="0" max="20" value="3">
+        </label>
+        <label class="field"><span data-i18n="opt.timeout">超时(秒)</span>
+          <input id="timeout" type="number" min="30" max="600" value="180">
+        </label>
+      </div>
+      <label class="check" style="margin-top:10px">
+        <input id="newProject" type="checkbox" checked> <span data-i18n="newproject">每条提示词新建项目</span>
+      </label>
+    </div>
+
+    <div class="status" style="margin-top:10px" data-i18n="dl.warn">
+      ⚠️ Chrome 设置 → 下载 → 关掉「下载前询问每个文件的保存位置」，否则自动下载会卡住。
+    </div>
+  </section>
+</main>
+
+<script src="panel.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+/* AICheatCode · Popup 覆盖样式（复用 panel.css 主题） */
+body { width: 360px; min-height: auto; }
+.plan { margin: 10px 14px 0; }
+.tabs { margin: 12px 14px 6px; }
+.tab-pane { padding: 6px 14px 0; }
+.app-header { padding: 12px 14px 10px; }
+details.opts {
+  margin-top: 12px; border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--surface); padding: 4px 12px;
+}
+details.opts > summary {
+  cursor: pointer; padding: 8px 0; font-size: 12.5px; font-weight: 600; color: #c4b5fd;
+  list-style: none; user-select: none;
+}
+details.opts > summary::-webkit-details-marker { display: none; }
+details.opts > summary::before { content: "▸ "; }
+details.opts[open] > summary::before { content: "▾ "; }
+details.opts .opt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; padding: 4px 0 10px; }
+.row.alt { justify-content: space-between; }
