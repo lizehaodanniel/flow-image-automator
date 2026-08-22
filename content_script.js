@@ -1,4 +1,4 @@
-// AICheatCode · Content Script v1.3.14
+// AICheatCode · Content Script v1.3.16
 // 跑在 https://labs.google/fx/* 上。任务：进入项目页 → 选模式/模型/画幅/时长 → 填词 → 点生成 → 取媒体。
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const PLACEHOLDER_KEY = 'placeholder';
@@ -622,6 +622,12 @@ async function generateOne(prompt, options = {}) {
   const aspectRatio = options.aspectRatio || '';
   const mode = options.mode || 'text2img';
 
+  // ===== 角色参考图：固定人物（视觉一致）=====
+  // 启用后把参考图作为图生图(img2img)的基准图，每张批量图都基于同一人物生成。
+  const charRef = options.charRef || null;
+  const charRefImages = charRef ? [charRef] : [];
+  const effectiveMode = charRef ? 'img2img' : mode;
+
   // 仅 Agent 模式尚未实现（需要自动多步推理）。图生视频 / 成分动画已开放：
   // 它们需要先手动上传图片素材，本扩展负责驱动后续生成但不自动上传。
   const UNSUPPORTED_MODES = ['agent'];
@@ -634,14 +640,14 @@ async function generateOne(prompt, options = {}) {
 
   // 图生视频 / 成分动画：现已支持自动上传图片素材，因此 newProject 遵循用户设置（默认每条新建项目，素材会在新项目里上传）。
   // 缺少图片素材时提前报错，避免无谓进入流程。
-  if (['frame2video', 'ingredients'].includes(mode) && (!options.images || !options.images.length)) {
+  if (['frame2video', 'ingredients'].includes(effectiveMode) && (!options.images || !options.images.length)) {
     return { ok: false, error: '图生视频/成分动画需要先选图片素材：请在侧边栏「素材图片」里添加（图生视频 1 张起始图；成分动画多张角色/组件图）后再运行。' };
   }
 
-  const newProject = options.newProject !== false; // 默认每条新建项目
+  const newProject = charRef ? true : (options.newProject !== false); // 固定人物时每条新建项目并重新注入参考图，避免「图生图链式漂移」(后一张基于前一张而非原始参考图)
 
   // 按模式选用对应模型：视频类模式用 videoModel，图片类用 imageModel，否则退回通用 model
-  const isVideoMode = ['text2video', 'frame2video', 'ingredients'].includes(mode);
+  const isVideoMode = ['text2video', 'frame2video', 'ingredients'].includes(effectiveMode);
   const model = (isVideoMode ? (options.videoModel || options.model) : (options.imageModel || options.model)) || '';
   const duration = options.duration || '';
   const timeoutMs = options.timeoutMs || 180000;
@@ -658,14 +664,18 @@ async function generateOne(prompt, options = {}) {
   }
 
   // 选模式/模型/画幅（best-effort：这些合成点击即便被框架忽略也只是沿用默认，不致命）
-  try { if (mode) await setMode(mode); } catch (_) {}
+  try { if (effectiveMode) await setMode(effectiveMode); } catch (_) {}
   try { if (model) await setModel(model); } catch (_) {}
   try { if (aspectRatio) await setAspectRatio(aspectRatio); } catch (_) {}
   try { if (duration) await setDuration(duration); } catch (_) {}
 
   // 图生视频 / 成分动画：先上传图片素材，再生成。上传后再快照“已有图”，把刚上传的素材一并视为输入、不误下载。
-  if (['frame2video', 'ingredients'].includes(mode)) {
-    const up = await uploadImagesToFlow(options.images || [], mode);
+  if (effectiveMode === 'img2img' && charRefImages.length) {
+    // 角色固定：把参考图作为图生图基准上传，每张批量图都基于同一人物
+    const up = await uploadImagesToFlow(charRefImages, 'img2img');
+    if (!up.ok) return { ok: false, error: up.error, diagnostic: up.diagnostic || '' };
+  } else if (['frame2video', 'ingredients'].includes(effectiveMode)) {
+    const up = await uploadImagesToFlow(options.images || [], effectiveMode);
     if (!up.ok) return { ok: false, error: up.error, diagnostic: up.diagnostic || '' };
   }
 

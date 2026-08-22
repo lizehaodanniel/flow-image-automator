@@ -68,6 +68,18 @@
     </div>
     <div id="assetList" class="asset-list"></div>
 
+    <div class="section-title"><span data-i18n="sec.charref">角色参考图</span> <span class="hint-inline" data-i18n="charref.hintshort">固定人物：所有批量图都以这张图的人物为基准</span></div>
+    <div class="charref">
+      <label class="check"><input id="charRefOn" type="checkbox"> <span data-i18n="charref.on">启用角色固定（视觉一致）</span></label>
+      <div class="file-row">
+        <button id="pickCharRef" class="ghost sm" data-i18n="charref.pick">选择参考图…</button>
+        <button id="clearCharRef" class="ghost sm" data-i18n="charref.clear">清除</button>
+        <input id="charRefInput" type="file" accept="image/*" hidden>
+      </div>
+      <div id="charRefPreview" class="charref-preview"></div>
+      <div class="hint-inline" data-i18n="charref.hint">启用后模式自动切到「图生图」，每张图用此参考图作为基准，人物保持一致。参考图建议用清晰、正面、光照均匀的全身或半身照。</div>
+    </div>
+
     <div class="field-row">
       <label class="field grow"><span data-i18n="folder.label">保存文件夹（留空=默认下载目录）</span>
         <input id="folder" type="text" data-i18n-ph="folder.ph" placeholder="例如 my-project">

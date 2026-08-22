@@ -10,6 +10,7 @@ A free, self-hosted browser extension that batch-submits prompts to **Google Flo
 
 - **Multiple modes**: Text-to-Image, Text-to-Video, Frame-to-Video, Ingredients, Image-to-Image
 - **Auto-upload for Frame-to-Video & Ingredients**: pick reference images in the side panel — the extension injects them into Flow and drives the generation automatically (no manual upload needed)
+- **Character Reference (face lock)**: pick one portrait in the side panel and enable "character lock" — the extension switches to Image-to-Image and uses that image as the base for every prompt, so the same person stays visually consistent across the whole batch. The reference is persisted, so it stays active next time you open the extension.
 - **Bilingual UI**: toggle between Chinese and English from the top-right; your choice is remembered
 - **Batch queue**: one prompt per line; import from `.txt` / `.csv`
 - **Retries, random delay, per-project folders, auto-rename** — all configurable
@@ -24,6 +25,20 @@ A free, self-hosted browser extension that batch-submits prompts to **Google Flo
 3. Turn on **Developer mode** (top-right).
 4. Click **Load unpacked** and select the unzipped folder (it must contain `manifest.json`).
 5. Open and sign in to [Google Flow](https://labs.google/fx), click the extension icon, open the side panel, choose a mode, paste your prompts, and hit **Run ▶**.
+
+---
+
+## 🎭 Character Reference (keep one person consistent)
+
+Want every generated image to show the **same person**? Use the character reference:
+
+1. In the side panel, scroll to **角色参考图 / Character reference**.
+2. Tick **启用角色固定 / Enable character lock**.
+3. Click **选择参考图 / Select reference…** and choose a clear, front-facing photo of the person (a full or half body shot with even lighting works best).
+4. Paste your prompts — one scene/pose per line. **Do not** describe the person in the prompt; just describe the scene, action, outfit change, background, camera, etc. The reference image supplies the face/identity.
+5. Hit **Run ▶**. The extension automatically switches to Image-to-Image. For **every line** it starts a fresh project and re-injects your reference as the base image — so each output is derived directly from your reference (never from a previous output), which keeps the character consistent across the whole batch and avoids the "drift" you get when images are chained together.
+
+> The reference image is stored locally in the extension and stays enabled after you close and reopen the browser. Use a reasonably sized image (under ~2 MB) so it persists reliably.
 
 ---
 

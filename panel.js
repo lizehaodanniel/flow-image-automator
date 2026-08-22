@@ -1,4 +1,4 @@
-// AICheatCode · Side Panel v1.3.14（中英文双语 · 控制/设置 双标签）
+// AICheatCode · Side Panel v1.3.16（中英文双语 · 控制/设置 双标签）
 const $ = (id) => document.getElementById(id);
 
 const listEl = $('list');
@@ -90,7 +90,7 @@ const I18N = {
     'dl.warn': '⚠️ Chrome 设置 → 下载 → 关掉「下载前询问每个文件的保存位置」，否则自动下载会卡住。',
     'note.text2video': '',
     'note.text2img': '',
-    'note.img2img': '图生图：当前版本按提示词生成，上传原图功能即将支持。',
+    'note.img2img': '图生图：可配合「角色参考图」固定人物，每张图都以参考图人物为基准生成。',
     'note.frame2video': '图生视频：本扩展会自动把你在「素材图片」里选的起始图上传到 Flow，再生成。每张提示词用同一张起始图。',
     'note.ingredients': '成分动画：本扩展会自动把你在「素材图片」里选的角色/组件图上传到 Flow，再合成视频。可一次选多张。',
     'note.agent': 'Agent 自动化模式当前版本暂未实现，将按文生视频/图流程尝试。',
@@ -123,6 +123,16 @@ const I18N = {
     'copied': '已复制 ✓',
     'copyFail': '复制失败',
     'remove': '移除',
+    'sec.charref': '角色参考图',
+    'charref.hintshort': '固定人物：所有批量图都以这张图的人物为基准',
+    'charref.on': '启用角色固定（视觉一致）',
+    'charref.pick': '选择参考图…',
+    'charref.clear': '清除',
+    'charref.hint': '启用后模式自动切到「图生图」，每张图用此参考图作为基准，人物保持一致。参考图建议用清晰、正面、光照均匀的全身或半身照。',
+    'st.charrefCleared': '已清除角色参考图',
+    'st.charrefAdded': '已设置角色参考图：{n}',
+    'st.charrefFail': '参考图读取失败',
+    'st.charrefTooBig': '图片超过 5MB，可能无法长期保存（扩展存储上限）。建议压缩到 2MB 以内。',
   },
   en: {
     'app.title': 'AICheatCode',
@@ -198,7 +208,7 @@ const I18N = {
     'dl.warn': '⚠️ Chrome Settings → Downloads → turn OFF "Ask where to save each file", otherwise auto-download stalls.',
     'note.text2video': '',
     'note.text2img': '',
-    'note.img2img': 'Image to Image: currently generates from prompt; uploading a source image is coming soon.',
+    'note.img2img': 'Image to Image: pair with "Character reference" to lock a person; every image is generated from that reference as the base.',
     'note.frame2video': 'Frame to Video: this extension auto-uploads the start image you picked in "Source images", then generates. Each prompt uses the same start image.',
     'note.ingredients': 'Ingredients: this extension auto-uploads the character/component images you picked in "Source images", then composites them into a video. Pick multiple.',
     'note.agent': 'Agent mode is not implemented yet; falls back to text-to-video/image flow.',
@@ -231,6 +241,16 @@ const I18N = {
     'copied': 'Copied ✓',
     'copyFail': 'Copy failed',
     'remove': 'Remove',
+    'sec.charref': 'Character reference',
+    'charref.hintshort': 'Fix the character: every batch image uses this person as the base',
+    'charref.on': 'Enable character lock (visual consistency)',
+    'charref.pick': 'Select reference…',
+    'charref.clear': 'Clear',
+    'charref.hint': 'When enabled, mode switches to Image-to-Image automatically; every image uses this reference as the base so the person stays consistent. Use a clear, front-facing, evenly-lit full or half body shot.',
+    'st.charrefCleared': 'Cleared character reference',
+    'st.charrefAdded': 'Character reference set: {n}',
+    'st.charrefFail': 'Failed to read reference image',
+    'st.charrefTooBig': 'Image over 5MB may not persist (storage limit). Resize to under 2MB recommended.',
   },
 };
 
@@ -368,6 +388,53 @@ function renderAssetList() {
 }
 renderAssetList();
 
+// ---------- 角色参考图（固定人物 / 视觉一致）----------
+const charRefInput = $('charRefInput');
+const charRefOn = $('charRefOn');
+let charRef = null; // {name, dataUrl, bytes}
+
+function renderCharRefPreview() {
+  const el = $('charRefPreview');
+  if (!el) return;
+  if (!charRef) { el.innerHTML = ''; return; }
+  el.innerHTML = '';
+  const wrap = document.createElement('div'); wrap.className = 'asset-thumb';
+  const img = document.createElement('img'); img.src = charRef.dataUrl; img.title = charRef.name;
+  const name = document.createElement('span'); name.className = 'asset-name'; name.textContent = charRef.name;
+  wrap.appendChild(img); wrap.appendChild(name);
+  el.appendChild(wrap);
+}
+
+$('pickCharRef').addEventListener('click', () => { charRefInput.click(); });
+$('clearCharRef').addEventListener('click', () => { charRef = null; charRefInput.value = ''; renderCharRefPreview(); setStatus(t('st.charrefCleared'), 'ok'); });
+charRefInput.addEventListener('change', () => {
+  const f = charRefInput.files && charRefInput.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    charRef = { name: f.name, dataUrl: String(reader.result || ''), bytes: f.size };
+    renderCharRefPreview();
+    if (f.size > 5 * 1024 * 1024) {
+      setStatus(t('st.charrefAdded', { n: f.name }) + ' ⚠️ ' + t('st.charrefTooBig'), 'warn');
+    } else {
+      setStatus(t('st.charrefAdded', { n: f.name }), 'ok');
+    }
+  };
+  reader.onerror = () => setStatus(t('st.charrefFail'), 'err');
+  reader.readAsDataURL(f);
+  charRefInput.value = '';
+});
+
+// 勾选「启用角色固定」时，自动把模式切到图生图，让用户直观看到生效
+function syncCharRefMode() {
+  if (charRefOn.checked && charRef) {
+    const chip = document.querySelector('.mode-chip[data-mode="img2img"]');
+    if (chip && modeInput.value !== 'img2img') chip.click();
+    modeNote.textContent = t('note.img2img');
+  }
+}
+charRefOn.addEventListener('change', syncCharRefMode);
+
 // ---------- 状态 / 队列 ----------
 function setStatus(text, cls) {
   statusEl.textContent = text;
@@ -430,6 +497,7 @@ function readOptions() {
     folder: $('folder').value.trim(),
     autoRename: $('autoRename').checked,
     images: selectedImages.map((x) => x.dataUrl), // 图生视频/成分动画的素材（仅本次运行使用，不持久化）
+    charRef: (charRefOn.checked && charRef) ? charRef.dataUrl : null, // 角色参考图（仅本次运行使用，base64 体积大不进 opts）
   };
 }
 function saveState() {
@@ -440,12 +508,14 @@ function saveState() {
       prompts: $('prompts').value,
       opts: opts,
       uiMode: modeInput.value,
+      charRef: (charRefOn.checked && charRef) ? charRef : null,
+      charRefOn: charRefOn.checked,
     });
   } catch (_) {}
 }
 function restoreState() {
   try {
-    chrome.storage.local.get(['prompts', 'opts', 'uiMode'], (s) => {
+    chrome.storage.local.get(['prompts', 'opts', 'uiMode', 'charRef', 'charRefOn'], (s) => {
       try {
         if (s && s.prompts) $('prompts').value = s.prompts;
         if (s && s.uiMode) {
@@ -464,6 +534,8 @@ function restoreState() {
           set('delay', o.delayMs ? Math.round(o.delayMs / 1000) : undefined);
           set('maxRetries', o.maxRetries); set('timeout', o.timeoutMs ? Math.round(o.timeoutMs / 1000) : undefined);
           setCheck('newProject', o.newProject); set('folder', o.folder); setCheck('autoRename', o.autoRename);
+          if (s && s.charRef) { charRef = s.charRef; renderCharRefPreview(); }
+          if (s && typeof s.charRefOn === 'boolean') { charRefOn.checked = s.charRefOn; }
         }
       } catch (_) {}
     });

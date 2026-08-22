@@ -1,4 +1,4 @@
-// AICheatCode · Popup v1.3.14（与面板一致视觉，紧凑单页）
+// AICheatCode · Popup v1.3.16（与面板一致视觉，紧凑单页）
 const $ = (id) => document.getElementById(id);
 
 const listEl = $('list');
@@ -100,6 +100,7 @@ function readOptions() {
     newProject: $('newProject').checked,
     folder: $('folder').value.trim(),
     autoRename: $('autoRename').checked,
+    charRef: null,
   };
 }
 function saveState() {
