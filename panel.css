@@ -234,3 +234,19 @@ button.sm { padding: 6px 11px; font-size: 11.5px; }
 }
 .card h3 { margin: 0 0 10px; font-size: 12.5px; color: #c4b5fd; font-weight: 700; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+/* ---------- 自检卡片 ---------- */
+.selfcheck {
+  margin: 10px 12px 0; padding: 10px 12px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); font-size: 12px;
+}
+.selfcheck-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; font-weight: 700; color: #c4b5fd; }
+.selfcheck-body { display: flex; flex-direction: column; gap: 5px; }
+.sc-row { display: flex; align-items: baseline; gap: 8px; line-height: 1.4; }
+.sc-icon { font-weight: 700; flex: none; }
+.sc-ok .sc-icon { color: var(--success); }
+.sc-bad .sc-icon { color: var(--danger); }
+.sc-label { color: var(--text); }
+.sc-det { color: var(--muted); }
+.ghost.xs { padding: 2px 8px; font-size: 11px; }

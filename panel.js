@@ -133,6 +133,16 @@ const I18N = {
     'st.charrefAdded': '已设置角色参考图：{n}',
     'st.charrefFail': '参考图读取失败',
     'st.charrefTooBig': '图片超过 5MB，可能无法长期保存（扩展存储上限）。建议压缩到 2MB 以内。',
+    'selfcheck.title': '🔧 自检',
+    'selfcheck.recheck': '重新检测',
+    'sc.ext': '扩展版本',
+    'sc.scripting': 'scripting 权限',
+    'sc.flowTab': 'Flow 标签页',
+    'sc.script': '内容脚本',
+    'sc.noTab': '未找到',
+    'sc.noScript': '未注入',
+    'diag.reinjectFail': '自动重新注入失败：{e}。请手动刷新 Flow 页面（F5），或在 chrome://extensions 点 🔄 刷新本扩展后再试。',
+    'diag.noScript': '自动重新注入失败（缺少 scripting 权限或被拦截）：{e}。请到 chrome://extensions 确认 AICHeatCode 已启用、版本 ≥ 1.3.23，并刷新 Flow 页面。',
   },
   en: {
     'app.title': 'AICheatCode',
@@ -251,6 +261,16 @@ const I18N = {
     'st.charrefAdded': 'Character reference set: {n}',
     'st.charrefFail': 'Failed to read reference image',
     'st.charrefTooBig': 'Image over 5MB may not persist (storage limit). Resize to under 2MB recommended.',
+    'selfcheck.title': '🔧 Self-check',
+    'selfcheck.recheck': 'Re-check',
+    'sc.ext': 'Extension version',
+    'sc.scripting': 'scripting permission',
+    'sc.flowTab': 'Flow tab',
+    'sc.script': 'Content script',
+    'sc.noTab': 'not found',
+    'sc.noScript': 'not injected',
+    'diag.reinjectFail': 'Auto re-injection failed: {e}. Please reload the Flow page (F5), or click 🔄 on this extension in chrome://extensions and retry.',
+    'diag.noScript': 'Auto re-injection failed (missing scripting permission or blocked): {e}. Please confirm AICHeatCode is enabled with version ≥ 1.3.23 in chrome://extensions, then reload the Flow page.',
   },
 };
 
@@ -279,6 +299,47 @@ function applyLang(l) {
   });
   if (modeNote) modeNote.textContent = t('note.' + modeInput.value) || '';
   try { chrome.storage.local.set({ lang: l }); } catch (_) {}
+}
+
+// ---------- 自检（把黑盒变成玻璃盒）----------
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+function scRow(label, ok, detail) {
+  const icon = ok ? '✓' : '✗';
+  const det = detail ? ' <span class="sc-det">' + escapeHtml(detail) + '</span>' : '';
+  return '<div class="sc-row ' + (ok ? 'sc-ok' : 'sc-bad') + '"><span class="sc-icon">' + icon + '</span><span class="sc-label">' + escapeHtml(label) + det + '</span></div>';
+}
+async function selfCheck() {
+  const body = $('selfcheckBody');
+  if (!body) return;
+  const man = (chrome.runtime && chrome.runtime.getManifest) ? chrome.runtime.getManifest() : null;
+  const extVer = man ? man.version : '?';
+  const perms = (man && man.permissions) || [];
+  const hasScripting = perms.indexOf('scripting') >= 0;
+  const rows = [ scRow(t('sc.ext'), true, extVer), scRow(t('sc.scripting'), hasScripting, hasScripting ? '' : '✗') ];
+  let flowTab = null, tabErr = '';
+  try {
+    const tabs = await chrome.tabs.query({ url: 'https://labs.google/fx/*' });
+    if (tabs && tabs.length) flowTab = tabs[0];
+  } catch (e) { tabErr = (e && e.message) || String(e); }
+  if (!flowTab) {
+    rows.push(scRow(t('sc.flowTab'), false, t('sc.noTab') + (tabErr ? ' (' + tabErr + ')' : '')));
+    rows.push(scRow(t('sc.script'), false, t('sc.noScript')));
+  } else {
+    rows.push(scRow(t('sc.flowTab'), true, '#' + flowTab.id));
+    const pr = await new Promise((res) => {
+      try {
+        chrome.tabs.sendMessage(flowTab.id, { cmd: 'ping' }, (r) => {
+          if (chrome.runtime.lastError) res({ err: chrome.runtime.lastError.message });
+          else res(r || { err: 'no-response' });
+        });
+      } catch (e) { res({ err: (e && e.message) || String(e) }); }
+    });
+    if (pr && pr.ok) rows.push(scRow(t('sc.script'), true, 'v' + (pr.ver || '?')));
+    else rows.push(scRow(t('sc.script'), false, (pr && pr.err) || t('sc.noScript')));
+  }
+  body.innerHTML = rows.join('');
 }
 
 // ---------- 标签切换 ----------
@@ -622,18 +683,37 @@ if (copyPageDiag) {
     setStatus(t('st.reading'), 'busy');
     try {
       const tabs = await chrome.tabs.query({ url: 'https://labs.google/fx/*' });
-      if (!tabs.length) { setStatus(t('st.noFlow'), 'err'); return; }
+      if (!tabs.length) {
+        setStatus(t('st.noFlow'), 'err');
+        selfCheck();
+        return;
+      }
       const tabId = tabs[0].id;
       const ask = (cb) => chrome.tabs.sendMessage(tabId, { cmd: 'diagnose' }, cb);
       ask((resp) => {
-        const connErr = chrome.runtime.lastError || !resp || !resp.ok;
-        if (connErr && /Receiving end|does not exist|context invalidated/i.test((resp && resp.error) || (chrome.runtime.lastError && chrome.runtime.lastError.message) || '')) {
-          // 内容脚本可能因扩展刚被重载而失效 → 自动重新注入再试
-          try {
-            chrome.scripting.executeScript({ target: { tabId }, files: ['content_script.js'] }).then(() => {
-              setTimeout(() => ask((r2) => finishDiag(r2)), 800);
-            }).catch(() => finishDiag(null));
-          } catch (_) { finishDiag(null); }
+        const lastErr = chrome.runtime.lastError;
+        const msg = (resp && resp.error) || (lastErr && lastErr.message) || '';
+        const connErr = lastErr || !resp || !resp.ok;
+        if (connErr) {
+          if (/Receiving end|does not exist|context invalidated/i.test(msg)) {
+            // 内容脚本未注入 → 尝试自动重新注入再试一次
+            try {
+              chrome.scripting.executeScript({ target: { tabId }, files: ['content_script.js'] })
+                .then(() => {
+                  setTimeout(() => {
+                    ask((r2) => {
+                      const le2 = chrome.runtime.lastError;
+                      if (r2 && r2.ok) { finishDiag(r2); }
+                      else { setStatus(t('diag.reinjectFail', { e: ((r2 && r2.error) || (le2 && le2.message) || '内容脚本仍未响应') }), 'err'); selfCheck(); }
+                    });
+                  }, 900);
+                })
+                .catch((e2) => { setStatus(t('diag.reinjectFail', { e: ((e2 && e2.message) || e2) }), 'err'); selfCheck(); });
+            } catch (e2) { setStatus(t('diag.noScript', { e: ((e2 && e2.message) || e2) }), 'err'); selfCheck(); }
+            return;
+          }
+          setStatus(t('st.diagFail', { e: msg || '内容脚本无响应' }), 'err');
+          selfCheck();
           return;
         }
         finishDiag(resp);
@@ -717,3 +797,7 @@ if (langSel) {
     applyLang('zh');
   }
 })();
+
+// 启动即做一次自检，并把「重新检测」按钮接上
+try { const rb = $('recheckBtn'); if (rb) rb.addEventListener('click', () => selfCheck()); } catch (_) {}
+try { selfCheck(); } catch (_) {}

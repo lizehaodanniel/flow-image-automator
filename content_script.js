@@ -1,4 +1,4 @@
-// AICHeatCode · Content Script v1.3.22
+// AICHeatCode · Content Script v1.3.23
 // 跑在 https://labs.google/fx/* 上。任务：进入项目页 → 选模式/模型/画幅/时长 → 填词 → 点生成 → 取媒体。
 // v1.3.18：兼容「新版 Flow UI」（isVisible 替代 offsetParent；新版入口/生成按钮识别）。
 // v1.3.19：① "生成已开始"检测失败不再误中止；② 上传验证改为"任意新增 img"。③ 错误自带完整诊断。
@@ -6,6 +6,7 @@
 // 上传成功判定放宽（新 img / 缩略图 div / 已注入 input.files 均视为成功），不再因新版把参考图放进媒体库而误判失败。
 // v1.3.21：彻底移除 chrome.debugger / CDP 真实输入；其触发 Flow 反调试导致页面被踢出、扩展不动。回归 v1.6/v1.7 纯合成事件驱动。
 // v1.3.22：恢复 manifest 的 scripting 权限，使侧边栏能在内容脚本失效时自动重新注入（自我修复），避免“读取失败”需手动刷新 Flow。
+// v1.3.23：ping 回传内容脚本版本；配合侧边栏自检，一眼看出“未注入 / 版本不匹配 / 旧版残留”。
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const PLACEHOLDER_KEY = 'placeholder';
 
@@ -919,7 +920,7 @@ function dumpPageStructure() {
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg && msg.cmd === 'ping') {
-    sendResponse({ ok: true, ts: Date.now() });
+    sendResponse({ ok: true, ts: Date.now(), ver: '1.3.23' });
     return true;
   }
   if (msg && msg.cmd === 'diagnose') {

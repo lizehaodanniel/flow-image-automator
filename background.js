@@ -1,7 +1,8 @@
-// AICheatCode · 后台 Service Worker v1.3.22
+// AICheatCode · 后台 Service Worker v1.3.23
 // 职责：找/开 Flow 标签页 → worker 池把每条提示词派给 content script → 下载（可建文件夹）→ 广播进度（含重试）
 // v1.3.21：移除 chrome.debugger/CDP 真实输入引擎（其触发 Flow 反调试、页面被踢出）。驱动改由 content script 纯合成事件完成。
 // v1.3.22：恢复 manifest 的 scripting 权限，侧边栏可在内容脚本失效时自动重新注入。
+// v1.3.23：配合 content script 的 ping 版本回传，侧边栏自检可直接显示“内容脚本在线 / 版本 / scripting 权限”。
 const DOWNLOAD_PREFIX = 'flow_';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
