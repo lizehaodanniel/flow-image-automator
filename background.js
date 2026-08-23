@@ -238,6 +238,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     sendResponse({ ok: true, ts: Date.now() });
     return true;
   }
+  // v1.3.17: 面板侧 20s 心跳，防止 service worker 在长 batch 中被回收
+  if (msg.cmd === 'heartbeat') {
+    sendResponse({ ok: true, ts: Date.now() });
+    return true;
+  }
   if (msg.cmd === 'startBatch') {
     handleBatch(msg.prompts || [], msg.options || {});
     sendResponse({ ok: true });
@@ -272,4 +277,20 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => {});
+  setupKeepalive();
 });
+
+// v1.3.17: MV3 service worker 30s 不活动会被回收 → 长间隔下消息链路断（第 4 张之后卡死）。
+// 用 chrome.alarms 定时触发事件保持 worker 活跃；periodInMinutes 最小 0.5（30s），生产环境可能被节流到 1 分钟，仍比 30s 不活动超时安全得多。
+function setupKeepalive() {
+  try {
+    chrome.alarms.create('aicheatcode-keepalive', { periodInMinutes: 0.5 });
+  } catch (_) {}
+}
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm && alarm.name === 'aicheatcode-keepalive') {
+    // 只触发事件，不做任何事——目的就是让 service worker 保持活跃
+  }
+});
+// 启动时也建一次闹钟（onInstalled 不一定每次都触发）
+setupKeepalive();

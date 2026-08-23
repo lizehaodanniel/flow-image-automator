@@ -21,18 +21,55 @@ function onProjectPage() {
 }
 
 // 点“新建项目”，进入新项目的编辑器画布
-async function ensureNewProject(timeoutMs = 20000) {
+// v1.3.17: 不再只看"输入框出现"——必须验证旧媒体清空 + 输入框为空。
+// 否则后续 batchItem 会在同一项目里继续生成，导致 img2img 链式漂移（角色变形）。
+async function ensureNewProject(timeoutMs = 25000) {
+  // 1. 记录点击前的媒体数量，用于验证旧媒体被清空
+  const mediaSel = 'img[src^="blob:"], img[src^="data:"], [class*="thumb" i], [class*="Thumb"], [class*="asset" i], [class*="Asset"]';
+  const mediaBefore = document.querySelectorAll(mediaSel).length;
+
   const btn = findButtonByText(
     ['新建项目', '新项目', 'New project', 'Create project', '新建'],
     'button, a, [role="button"], div'
   );
   if (!btn) return false;
   btn.click();
+
   const t0 = Date.now();
+  let inputAppeared = false;
   while (Date.now() - t0 < timeoutMs) {
     const inp = document.querySelector('div[role="textbox"]');
-    if (inp && inp.offsetParent !== null) return true;
+    if (inp && inp.offsetParent !== null) {
+      inputAppeared = true;
+      // 2. 验证旧媒体已清空
+      const mediaNow = document.querySelectorAll(mediaSel).length;
+      // 3. 验证输入框是空的（没有残留提示词）
+      const txt = (inp.innerText || '').trim();
+      if ((mediaNow < mediaBefore || mediaNow === 0) && txt.length === 0) return true;
+    }
     await sleep(1500);
+  }
+
+  // 旧媒体没清空：再点一次"新建项目"（Flow 有时第一次点击只是导航，第二次才真正清空）
+  if (inputAppeared) {
+    console.warn('[Flow扩展] 新建项目后旧媒体未清空，再次点击');
+    const btn2 = findButtonByText(
+      ['新建项目', '新项目', 'New project', 'Create project', '新建'],
+      'button, a, [role="button"], div'
+    );
+    if (btn2) {
+      btn2.click();
+      const t1 = Date.now();
+      while (Date.now() - t1 < 10000) {
+        const inp = document.querySelector('div[role="textbox"]');
+        if (inp && inp.offsetParent !== null) {
+          const mediaNow = document.querySelectorAll(mediaSel).length;
+          const txt = (inp.innerText || '').trim();
+          if ((mediaNow < mediaBefore || mediaNow === 0) && txt.length === 0) return true;
+        }
+        await sleep(1000);
+      }
+    }
   }
   return false;
 }
@@ -560,15 +597,30 @@ async function uploadViaDropZone(zone, files) {
   fire('dragenter'); fire('dragover'); fire('drop');
   await sleep(500);
 }
+// v1.3.17: 记录上传前的 blob/data URL 集合，只把"新增的"算作成功上传。
+// 旧实现只看"页面上有没有图"——只要之前残留了旧图就直接返回 ok=true，根本没上传新参考图。
 async function waitForUploadDone(expected, timeoutMs) {
   const sel = 'img[src^="blob:"], img[src^="data:"], [class*="thumb"], [class*="Thumb"], [class*="asset"], [class*="Asset"]';
+  const beforeBlobs = new Set(Array.from(document.querySelectorAll('img[src^="blob:"]')).map((i) => i.src));
+  const beforeData = new Set(Array.from(document.querySelectorAll('img[src^="data:"]')).map((i) => i.src));
+  const beforeTotal = beforeBlobs.size + beforeData.size;
   const t0 = Date.now();
   while (Date.now() - t0 < (timeoutMs || 25000)) {
-    if (document.querySelectorAll(sel).length >= expected) return { ok: true };
-    await sleep(1000);
+    const nowBlobs = Array.from(document.querySelectorAll('img[src^="blob:"]')).map((i) => i.src);
+    const nowData = Array.from(document.querySelectorAll('img[src^="data:"]')).map((i) => i.src);
+    const newBlobs = nowBlobs.filter((s) => !beforeBlobs.has(s));
+    const newData = nowData.filter((s) => !beforeData.has(s));
+    const newCount = newBlobs.length + newData.length;
+    if (newCount >= expected) return { ok: true, newCount };
+    await sleep(800);
   }
-  if (document.querySelectorAll(sel).length > 0) return { ok: true };
-  return { ok: false, error: '上传后未在页面检测到缩略图（Flow 的上传 UI 可能与预期不同）。请点「🔍 复制页面诊断」把上传区 DOM 发我，我据此精修选择器。', diagnostic: dumpUploadArea() };
+  // 最后再算一次：有没有任何"新增"的图
+  const nowBlobs = Array.from(document.querySelectorAll('img[src^="blob:"]')).map((i) => i.src);
+  const nowData = Array.from(document.querySelectorAll('img[src^="data:"]')).map((i) => i.src);
+  const newBlobs = nowBlobs.filter((s) => !beforeBlobs.has(s));
+  const newData = nowData.filter((s) => !beforeData.has(s));
+  if (newBlobs.length + newData.length > 0) return { ok: true, newCount: newBlobs.length + newData.length };
+  return { ok: false, error: '上传后未在页面检测到新缩略图（Flow 的上传 UI 可能与预期不同，或上次残留的旧图未清空）。请点「🔍 复制页面诊断」把上传区 DOM 发我，我据此精修选择器。', diagnostic: dumpUploadArea() };
 }
 function dumpUploadArea() {
   const lines = ['=== Flow 上传区诊断 ==='];
@@ -703,16 +755,36 @@ async function generateOne(prompt, options = {}) {
   }
 
   const items = [];
+  // v1.3.17: 提示词读回验证——避免"输入框还残留上一条提示词"导致连续生成同一张图
+  function readPromptInBox() {
+    const tb = document.querySelector('div[role="textbox"]');
+    return tb ? (tb.innerText || '').trim() : '';
+  }
+  function verifyPromptInBox(expected, got) {
+    if (!expected) return true;
+    if (!got) return false;
+    const head = expected.slice(0, Math.min(24, expected.length)).trim();
+    if (head && got.includes(head)) return true;
+    // 回退：尾部匹配（应对 Flow 把头几个字符截断的情况）
+    const tail = expected.slice(-24).trim();
+    if (tail && got.includes(tail)) return true;
+    return false;
+  }
   for (let n = 0; n < count; n++) {
     // 每次都确保提示词在框里（Flow 一次生成后可能清空输入框）
-    try { await typePrompt(); } catch (e) {
-      return { ok: false, error: (e && e.message) || String(e) };
+    let promptInBox = '';
+    for (let vretry = 0; vretry < 3; vretry++) {
+      try { await typePrompt(); } catch (e) {
+        return { ok: false, error: (e && e.message) || String(e) };
+      }
+      promptInBox = readPromptInBox();
+      if (verifyPromptInBox(prompt, promptInBox)) break;
+      console.log('[Flow扩展] 提示词读回不匹配（重试 ' + (vretry + 1) + '/3），输入框="' + promptInBox.slice(0, 60) + '"');
+      await sleep(500);
     }
-    // 记录我们实际写进去的提示词，用于判断 Flow 是否真的收到
-    const promptInBox = (() => {
-      const tb = document.querySelector('div[role="textbox"]');
-      return tb ? (tb.innerText || '').trim() : '';
-    })();
+    if (!verifyPromptInBox(prompt, promptInBox)) {
+      return { ok: false, error: '提示词写入后读回不匹配：预期="' + prompt.slice(0, 40) + '..."，实际="' + promptInBox.slice(0, 60) + '"。Flow 可能改了输入框行为，请把「🔍 复制页面诊断」发我。' };
+    }
     try { await clickSubmit(); } catch (e) {
       return { ok: false, error: (e && e.message) || String(e) };
     }

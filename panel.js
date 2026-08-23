@@ -560,6 +560,18 @@ function pingBg(cb) {
 }
 pingBg((ok) => setConn(ok ? 'ok' : 'fail'));
 
+// v1.3.17: 批量运行期间每 20s 给后台发一次心跳，防止 MV3 service worker 30s 不活动被回收
+let heartbeatTimer = null;
+function startHeartbeat() {
+  stopHeartbeat();
+  heartbeatTimer = setInterval(() => {
+    try { chrome.runtime.sendMessage({ cmd: 'heartbeat' }, () => { void chrome.runtime.lastError; }); } catch (_) {}
+  }, 20000);
+}
+function stopHeartbeat() {
+  if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+}
+
 startBtn.addEventListener('click', () => {
   setStatus(t('st.clicked'), 'busy');
   try {
@@ -584,8 +596,10 @@ startBtn.addEventListener('click', () => {
           setConn('fail');
           startBtn.disabled = false;
           stopBtn.disabled = true;
+          stopHeartbeat();
         } else {
           setConn('ok');
+          startHeartbeat();
         }
       }
     );
@@ -677,11 +691,13 @@ chrome.runtime.onMessage.addListener((msg) => {
     startBtn.disabled = false;
     stopBtn.disabled = true;
     setStatus(msg.stopped ? t('st.stopped') : t('st.allDone'), msg.stopped ? '' : 'ok');
+    stopHeartbeat();
   } else if (msg.type === 'error') {
     startBtn.disabled = false;
     stopBtn.disabled = true;
     setStatus(t('st.error', { e: msg.error }), 'err');
     setConn('fail');
+    stopHeartbeat();
   }
 });
 
