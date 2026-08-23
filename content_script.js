@@ -1,5 +1,8 @@
-// AICheatCode · Content Script v1.3.17
+// AICheatCode · Content Script v1.3.18
 // 跑在 https://labs.google/fx/* 上。任务：进入项目页 → 选模式/模型/画幅/时长 → 填词 → 点生成 → 取媒体。
+// v1.3.18：兼容「新版 Flow UI」（灰度推送）。新版把提示词框包在 position:fixed 容器里，
+// 导致原有的 offsetParent!==null 可见性判断恒为 false → 一直以为没进编辑器 → 屏幕“不动”。
+// 全部改为 isVisible()（用 getBoundingClientRect + computedStyle 判断）；并新增新版入口/生成按钮识别。
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const PLACEHOLDER_KEY = 'placeholder';
 
@@ -20,10 +23,73 @@ function onProjectPage() {
   return /\/fx\/tools\/flow\/project\//.test(location.href);
 }
 
+// 判断元素是否真正可见。替代“offsetParent !== null”：
+// 新版 Flow UI 的提示词框常包在 position:fixed 容器里，offsetParent 恒为 null，
+// 导致“可见的输入框”被误判为不可见 → ensureCanvas 永远超时 → 屏幕“不动”。
+function isVisible(el) {
+  if (!el) return false;
+  const r = el.getBoundingClientRect();
+  if (r.width <= 0 || r.height <= 0) return false;
+  const cs = getComputedStyle(el);
+  if (cs.visibility === 'hidden' || cs.display === 'none') return false;
+  if (parseFloat(cs.opacity || '1') === 0) return false;
+  return true;
+}
+
+// 取提示词输入框（新版/旧版都是 contentEditable 的 div[role="textbox"]）
+function getPromptBox() {
+  return document.querySelector('div[role="textbox"]');
+}
+
+// 是否处于“新版 Flow UI”：提示词框占位符是“您希望创作什么内容？”，
+// 且输入栏里有「智能体 / Nano Banana 2」这类新芯片（旧版没有）。
+function isNewFlowUI() {
+  const tb = getPromptBox();
+  if (tb) {
+    const t = (tb.innerText || '').trim();
+    if (t.includes('您希望创作什么内容') || t.includes('创作什么')) return true;
+  }
+  if (findButtonByText(['智能体', 'Nano Banana'], 'button, [role="button"], div, span')) return true;
+  return false;
+}
+
+// 等待提示词框真正可见（新版兼容）
+async function waitForPromptBox(timeoutMs = 25000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    const tb = getPromptBox();
+    if (tb && isVisible(tb)) return tb;
+    await sleep(1200);
+  }
+  return null;
+}
+
 // 点“新建项目”，进入新项目的编辑器画布
-// v1.3.17: 不再只看"输入框出现"——必须验证旧媒体清空 + 输入框为空。
-// 否则后续 batchItem 会在同一项目里继续生成，导致 img2img 链式漂移（角色变形）。
+// v1.3.18: 兼容新版 Flow UI（无“新建项目”按钮，编辑器就是落地页；
+// 且新版输入框包在 position:fixed 里，必须用 isVisible 而非 offsetParent 判断可见性）。
 async function ensureNewProject(timeoutMs = 25000) {
+  // ===== 新版 Flow UI：编辑器入口就是提示词框，没有“新建项目”按钮 =====
+  if (isNewFlowUI()) {
+    const tb = getPromptBox();
+    if (tb && isVisible(tb)) return true; // 已在编辑器即可，后续由 generateOne 处理全新画布
+    // 不在编辑器：尝试点“创建/新建/开始”等入口进入
+    const entry = findButtonByText(
+      ['创建', '新建', '开始', '新建项目', 'New project', 'Create project', 'Get started', '进入', '打开'],
+      'button, a, [role="button"], div'
+    );
+    if (entry) {
+      entry.click();
+      if (await waitForPromptBox(20000)) return true;
+    }
+    const card = document.querySelector('[role="gridcell"], a[href*="/project/"], [class*="card"], [class*="Card"]');
+    if (card) {
+      card.click();
+      if (await waitForPromptBox(20000)) return true;
+    }
+    return false;
+  }
+
+  // ===== 旧版 Flow UI =====
   // 1. 记录点击前的媒体数量，用于验证旧媒体被清空
   const mediaSel = 'img[src^="blob:"], img[src^="data:"], [class*="thumb" i], [class*="Thumb"], [class*="asset" i], [class*="Asset"]';
   const mediaBefore = document.querySelectorAll(mediaSel).length;
@@ -32,14 +98,19 @@ async function ensureNewProject(timeoutMs = 25000) {
     ['新建项目', '新项目', 'New project', 'Create project', '新建'],
     'button, a, [role="button"], div'
   );
-  if (!btn) return false;
+  if (!btn) {
+    // 旧版某些灰度变体也可能直接就在编辑器（无“新建项目”按钮）
+    const tb = getPromptBox();
+    if (tb && isVisible(tb)) return true;
+    return false;
+  }
   btn.click();
 
   const t0 = Date.now();
   let inputAppeared = false;
   while (Date.now() - t0 < timeoutMs) {
-    const inp = document.querySelector('div[role="textbox"]');
-    if (inp && inp.offsetParent !== null) {
+    const inp = getPromptBox();
+    if (inp && isVisible(inp)) {
       inputAppeared = true;
       // 2. 验证旧媒体已清空
       const mediaNow = document.querySelectorAll(mediaSel).length;
@@ -61,8 +132,8 @@ async function ensureNewProject(timeoutMs = 25000) {
       btn2.click();
       const t1 = Date.now();
       while (Date.now() - t1 < 10000) {
-        const inp = document.querySelector('div[role="textbox"]');
-        if (inp && inp.offsetParent !== null) {
+        const inp = getPromptBox();
+        if (inp && isVisible(inp)) {
           const mediaNow = document.querySelectorAll(mediaSel).length;
           const txt = (inp.innerText || '').trim();
           if ((mediaNow < mediaBefore || mediaNow === 0) && txt.length === 0) return true;
@@ -79,17 +150,19 @@ async function ensureCanvas(timeoutMs = 30000) {
   const t0 = Date.now();
   let tried = false;
   while (Date.now() - t0 < timeoutMs) {
-    const inp = document.querySelector('div[role="textbox"]');
-    if (inp && inp.offsetParent !== null) return true;
+    const inp = getPromptBox();
+    if (inp && isVisible(inp)) return true;
     if (!tried) {
+      // 新版入口词（创建/新建/开始创作）+ 旧版入口词
       const btn = findButtonByText(
-        ['Get started', 'Create with Google Flow', '开始使用', '打开项目', 'New project', '新建项目', '进入', '进入项目'],
+        ['Get started', 'Create with Google Flow', '开始使用', '打开项目', 'New project', '新建项目', '进入', '进入项目', '创建', '新建', '开始创作'],
         'button, a, [role="button"], div'
       );
       if (btn) { btn.click(); tried = true; await sleep(1500); continue; }
       // 尝试点第一个项目卡片
-      const card = document.querySelector('[role="gridcell"], a[href*="/project/"]');
+      const card = document.querySelector('[role="gridcell"], a[href*="/project/"], [class*="card"], [class*="Card"]');
       if (card) { card.click(); tried = true; await sleep(1500); continue; }
+      tried = true;
     }
     await sleep(1500);
   }
@@ -339,11 +412,12 @@ function pickSubmit(btns) {
 function findGenerateButton(skipDisabled) {
   if (skipDisabled === undefined) skipDisabled = true;
   // 1) 从 textbox 上升找包含它的「输入栏」，在栏内挑提交按钮
-  const tb = document.querySelector('div[role="textbox"]');
+  const tb = getPromptBox();
   if (tb) {
     let bar = tb.parentElement;
     for (let i = 0; i < 8 && bar; i++) {
       let btns = Array.from(bar.querySelectorAll('button')).filter((b) => !b.contains(tb));
+      btns = btns.filter((b) => isVisible(b)); // 排除隐藏/固定定位导致不可见的按钮
       if (skipDisabled) btns = btns.filter((b) => !b.disabled);
       if (btns.length) {
         const s = pickSubmit(btns);
@@ -352,8 +426,9 @@ function findGenerateButton(skipDisabled) {
       bar = bar.parentElement;
     }
   }
-  // 2) 兜底：全局找 arrow_forward 提交按钮
+  // 2) 兜底：全局找 arrow_forward 提交按钮（必须可见）
   for (const b of document.querySelectorAll('button')) {
+    if (!isVisible(b)) continue;
     if (skipDisabled && b.disabled) continue;
     const t = ((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '')).trim();
     if (/arrow_forward/i.test(t)) return b;
@@ -445,7 +520,7 @@ async function waitForVisible(sel, timeoutMs) {
   const t0 = Date.now();
   while (Date.now() - t0 < timeoutMs) {
     const el = document.querySelector(sel);
-    if (el && el.offsetParent !== null) return el;
+    if (el && isVisible(el)) return el;
     await sleep(300);
   }
   throw new Error('选择器超时：' + sel);
@@ -576,7 +651,7 @@ async function injectFileIntoInput(input, file) {
 }
 async function clickUploadTrigger() {
   const trigger = findButtonByText(
-    ['上传', '添加', '导入', '选择文件', '选择图片', '选择图像', 'add media', 'upload', 'import', 'choose', '选择', '图片', '照片', '从设备', '上传图片', '上传图像'],
+    ['上传', '添加', '导入', '选择文件', '选择图片', '选择图像', 'add media', 'upload', 'import', 'choose', '选择', '图片', '照片', '从设备', '上传图片', '上传图像', '添加媒体', '查看已上传的媒体内容', '媒体内容'],
     'button, [role="button"], div, span, a'
   );
   if (!trigger) return false;
@@ -647,7 +722,10 @@ async function uploadImagesToFlow(dataUrls, mode) {
   let input = findFileInput();
   if (input) {
     for (const f of files) await injectFileIntoInput(input, f);
-    return await waitForUploadDone(files.length);
+    const r1 = await waitForUploadDone(files.length);
+    if (r1.ok) return r1;
+    // 隐藏 input 未与 React 绑定 → 退回策略2（点“添加媒体”触发真正的上传入口）
+    console.warn('[Flow扩展] 直接注入隐藏 input 未检测到上传，改走按钮触发');
   }
 
   // 策略2：点“上传/添加”按钮触发隐藏 file input，再注入
@@ -849,7 +927,11 @@ async function generateOne(prompt, options = {}) {
     if (key) seenKeys.add(key);
     uniqueItems.push(it);
   }
-  return { ok: true, items: uniqueItems, count: uniqueItems.length };
+  // 新版 Flow UI + 需要“每条全新画布”的场景（图生图/成分动画/图生视频等）：
+  // 请求后台在 item 之间重载标签页，拿到干净的画布，避免「图生图链式漂移」（角色变形）。
+  // 纯文生图(text2img) 每条互相独立，不需要重载，保持速度。
+  const needFreshCanvas = isNewFlowUI() && newProject && effectiveMode !== 'text2img';
+  return { ok: true, items: uniqueItems, count: uniqueItems.length, needFreshCanvas };
 }
 
 // 把 Flow 页面的真实结构 dump 出来（输入框候选 / 全部按钮 / 输入框所在输入栏的按钮），

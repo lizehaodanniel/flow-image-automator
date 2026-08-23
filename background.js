@@ -1,4 +1,4 @@
-// AICheatCode · 后台 Service Worker v1.3.17
+// AICheatCode · 后台 Service Worker v1.3.18
 // 职责：找/开 Flow 标签页 → worker 池把每条提示词派给 content script → 下载（可建文件夹）→ 广播进度（含重试）
 const DOWNLOAD_PREFIX = 'flow_';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -139,6 +139,15 @@ async function cdpClickAt(tabId, rect) {
   }
 }
 
+// 在 item 之间重载 Flow 标签页，拿到全新画布（新版 Flow UI 无“新建项目”按钮，
+// 重载是拿到干净画布、避免图生图链式漂移最稳妥的方式）。重载后 content script 会重新注入。
+async function reloadTabForFresh(tabId) {
+  try {
+    await chrome.tabs.reload(tabId);
+    await sleep(4000); // 等页面重载 + content script 重新注入并注册消息监听
+  } catch (_) {}
+}
+
 async function downloadOne(item, filename, folder, autoRename) {
   let fname = filename;
   if (!autoRename) {
@@ -188,6 +197,10 @@ async function workerLoop(tabId, queue, options, delayMs, randomDelayMs) {
         } catch (_) {}
       }
       notify({ type: 'itemDone', index: job.index, prompt: job.prompt, ok: true, count: res.items.length });
+      // 新版 Flow UI + 需要全新画布的场景：在 item 之间重载，避免链式漂移
+      if (res.needFreshCanvas && queue.length && !_stopRequested) {
+        await reloadTabForFresh(tabId);
+      }
     } else {
       notify({ type: 'itemDone', index: job.index, prompt: job.prompt, ok: false, error: (res && res.error) || '未捕获到结果', diagnostic: (res && res.diagnostic) || '' });
     }

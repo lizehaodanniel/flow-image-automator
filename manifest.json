@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "AICheatCode",
-  "version": "1.3.17",
-  "description": "批量向 Google Flow 提交提示词，自动生成并下载图片/视频。免费自托管版：多模式（文生图/文生视频/图生视频/成分动画/图生图）、画幅/模型/时长、重试、随机延迟、按项目建文件夹。v1.3.17 修复批量角色固定下的「同提示词重复生成」「图生图链式漂移」「第 4 张之后卡死」三大问题：上传验证改为「新增图」识别；新建项目验证旧媒体清空；提示词读回验证；service worker 心跳保活。",
+  "version": "1.3.18",
+  "description": "批量向 Google Flow 提交提示词，自动生成并下载图片/视频。免费自托管版：多模式（文生图/文生视频/图生视频/成分动画/图生图）、画幅/模型/时长、重试、随机延迟、按项目建文件夹。v1.3.18 兼容「新版 Flow UI」灰度推送：用 isVisible() 替代 offsetParent 判断（新版输入框包在 position:fixed 里导致旧版一直误判“不在编辑器”→屏幕不动）；新增新版入口/生成按钮（arrow_forward 创建）识别；上传兼容隐藏 file input 与「添加媒体」。",
   "permissions": ["downloads", "storage", "tabs", "sidePanel", "scripting", "debugger", "alarms"],
   "host_permissions": [
     "https://labs.google/*",
