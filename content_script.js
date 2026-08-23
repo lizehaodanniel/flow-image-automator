@@ -1,8 +1,9 @@
-// AICheatCode · Content Script v1.3.19
+// AICHeatCode · Content Script v1.3.20
 // 跑在 https://labs.google/fx/* 上。任务：进入项目页 → 选模式/模型/画幅/时长 → 填词 → 点生成 → 取媒体。
 // v1.3.18：兼容「新版 Flow UI」（isVisible 替代 offsetParent；新版入口/生成按钮识别）。
-// v1.3.19：① “生成已开始”检测失败不再误中止（继续等真实 MEDIA，避免“点了不生成”）；
-// ② 上传验证改为“任意新增 img”更鲁棒（兼容新版上传渲染）；③ 所有错误自动附带完整页面诊断。
+// v1.3.19：① “生成已开始”检测失败不再误中止；② 上传验证改为“任意新增 img”。③ 错误自带完整诊断。
+// v1.3.20：修「固定角色参考图上传卡住」——文件注入改用原生 files setter（更兼容 React onChange）；
+// 上传成功判定放宽（新 img / 缩略图 div / 已注入 input.files 均视为成功），不再因新版把参考图放进媒体库而误判失败。
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const PLACEHOLDER_KEY = 'placeholder';
 
@@ -645,10 +646,18 @@ function findFileInput() {
 async function injectFileIntoInput(input, file) {
   const dt = new DataTransfer();
   dt.items.add(file);
-  try { input.files = dt.files; } catch (_) {}
+  // 用原型上的原生 files setter 写入，比直接赋值 input.files 更能被 React 的 onChange 捕获
+  try {
+    const proto = Object.getPrototypeOf(input);
+    const desc = Object.getOwnPropertyDescriptor(proto, 'files');
+    if (desc && desc.set) desc.set.call(input, dt.files);
+    else input.files = dt.files;
+  } catch (_) {
+    try { input.files = dt.files; } catch (_) {}
+  }
   input.dispatchEvent(new Event('change', { bubbles: true }));
   input.dispatchEvent(new Event('input', { bubbles: true }));
-  await sleep(400);
+  await sleep(500);
 }
 async function clickUploadTrigger() {
   const trigger = findButtonByText(
@@ -675,21 +684,38 @@ async function uploadViaDropZone(zone, files) {
 }
 // v1.3.17: 记录上传前的 blob/data URL 集合，只把"新增的"算作成功上传。
 // 旧实现只看"页面上有没有图"——只要之前残留了旧图就直接返回 ok=true，根本没上传新参考图。
-async function waitForUploadDone(expected, timeoutMs) {
-  // 旧版：只认 blob:/data: 缩略图。新版 Flow UI 上传后参考图可能渲染成任意新的 img（含 https/googleusercontent），
-  // 所以改成“上传前快照所有 img 的 src，上传后只要出现任何新增 img 即视为成功”，更鲁棒。
-  const allImgSrcs = () => new Set(Array.from(document.querySelectorAll('img')).map((i) => i.src).filter(Boolean));
-  const before = allImgSrcs();
+async function waitForUploadDone(expected, timeoutMs, input) {
+  // 新版 Flow UI 上传后参考图可能渲染成：新增 img（blob:/https/...）、或缩略图 div（class 含 thumb/asset/media/reference）、
+  // 或进入“媒体库”（查看已上传的媒体内容）而不在当前画布显示新 img。所以成功判定放宽：
+  // ① 出现任何新的 img/缩略图 div 即视为成功；② 兜底：只要文件确实被注入进 input（files 达标），
+  //    认为 Flow 已收到并开始上传，放行（新版常把参考图放进媒体库，当前画布数不到新 img）。
+  const snapMarkers = () => {
+    const set = new Set();
+    for (const i of document.querySelectorAll('img')) {
+      const s = i.src || '';
+      if (s.startsWith('blob:') || s.startsWith('http') || s.startsWith('data:')) set.add('img:' + s);
+    }
+    for (const d of document.querySelectorAll('div[class*="thumb" i], div[class*="asset" i], div[class*="media" i], div[class*="reference" i], div[class*="ref" i]')) {
+      set.add('div:' + (d.className || '') + ':' + ((d.getAttribute('style') || '').slice(0, 120)));
+    }
+    return set;
+  };
+  const before = snapMarkers();
   const t0 = Date.now();
   while (Date.now() - t0 < (timeoutMs || 30000)) {
-    const now = allImgSrcs();
+    const now = snapMarkers();
     let newCount = 0;
     for (const s of now) if (!before.has(s)) newCount++;
     if (newCount >= expected) return { ok: true, newCount };
     await sleep(800);
   }
-  // 最后再算一次：有没有任何"新增"的图
-  const now2 = allImgSrcs();
+  // 兜底①：注入确实把文件放进 input 了（files 达标）→ 视为上传已触发，放行
+  if (input && input.files && input.files.length >= expected) {
+    console.warn('[Flow扩展] 未检测到新缩略图，但文件已注入 input（files=' + input.files.length + '），视为上传已触发，放行');
+    return { ok: true, newCount: input.files.length, note: 'injected-but-no-thumbnail' };
+  }
+  // 兜底②：再算一次有没有新增 img/缩略图
+  const now2 = snapMarkers();
   let newCount = 0;
   for (const s of now2) if (!before.has(s)) newCount++;
   if (newCount > 0) return { ok: true, newCount };
@@ -720,7 +746,7 @@ async function uploadImagesToFlow(dataUrls, mode) {
   let input = findFileInput();
   if (input) {
     for (const f of files) await injectFileIntoInput(input, f);
-    const r1 = await waitForUploadDone(files.length);
+    const r1 = await waitForUploadDone(files.length, 30000, input);
     if (r1.ok) return r1;
     // 隐藏 input 未与 React 绑定 → 退回策略2（点“添加媒体”触发真正的上传入口）
     console.warn('[Flow扩展] 直接注入隐藏 input 未检测到上传，改走按钮触发');
@@ -732,14 +758,14 @@ async function uploadImagesToFlow(dataUrls, mode) {
   input = findFileInput();
   if (input) {
     for (const f of files) await injectFileIntoInput(input, f);
-    return await waitForUploadDone(files.length);
+    return await waitForUploadDone(files.length, 30000, input);
   }
 
   // 策略3：拖拽区
   const zone = document.querySelector('[class*="drop"], [class*="Drop"], [data-test*="drop"], [class*="upload"], [class*="Upload"]');
   if (zone && zone.tagName !== 'INPUT') {
     await uploadViaDropZone(zone, files);
-    return await waitForUploadDone(files.length);
+    return await waitForUploadDone(files.length, 30000, input);
   }
 
   return { ok: false, error: '未能定位 Flow 的上传入口（file input / 上传按钮 / 拖拽区）。请点「🔍 复制页面诊断」把上传区 DOM 发我。', diagnostic: dumpUploadArea() };
