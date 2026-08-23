@@ -44,8 +44,8 @@ Want every generated image to show the **same person**? Use the character refere
 
 ## ❓ FAQ
 
-**Why does Chrome warn about a "debugger" permission at load time?**
-This is normal. The extension uses the Chrome DevTools Protocol to auto-upload images and dispatch trusted clicks inside Flow. As an unpacked extension loaded by you, it does not send any data anywhere.
+**Does the extension request a "debugger" permission?**
+No. Since v1.3.21 the extension no longer requests the `debugger` (Chrome DevTools Protocol) permission. It drives Flow purely with synthetic DOM events (`.click()` / `execCommand` / `KeyboardEvent`), which avoids triggering Flow's anti-debugging ("已经开始调试此浏览器") that used to kick the page out. As an unpacked extension loaded by you, it sends no data anywhere.
 
 **Does generating videos cost money?**
 The extension itself is free. But **Google Flow charges your own Flow credits** for video/image generation (tied to your Google account — completely independent of this extension). If you run out of credits, video generation will fail; image-only modes are cheaper.

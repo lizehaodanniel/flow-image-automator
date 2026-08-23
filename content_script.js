@@ -1,9 +1,10 @@
-// AICHeatCode · Content Script v1.3.20
+// AICHeatCode · Content Script v1.3.21
 // 跑在 https://labs.google/fx/* 上。任务：进入项目页 → 选模式/模型/画幅/时长 → 填词 → 点生成 → 取媒体。
 // v1.3.18：兼容「新版 Flow UI」（isVisible 替代 offsetParent；新版入口/生成按钮识别）。
-// v1.3.19：① “生成已开始”检测失败不再误中止；② 上传验证改为“任意新增 img”。③ 错误自带完整诊断。
+// v1.3.19：① "生成已开始"检测失败不再误中止；② 上传验证改为"任意新增 img"。③ 错误自带完整诊断。
 // v1.3.20：修「固定角色参考图上传卡住」——文件注入改用原生 files setter（更兼容 React onChange）；
 // 上传成功判定放宽（新 img / 缩略图 div / 已注入 input.files 均视为成功），不再因新版把参考图放进媒体库而误判失败。
+// v1.3.21：彻底移除 chrome.debugger / CDP 真实输入；其触发 Flow 反调试导致页面被踢出、扩展不动。回归 v1.6/v1.7 纯合成事件驱动。
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const PLACEHOLDER_KEY = 'placeholder';
 
@@ -288,30 +289,21 @@ function diagnose(startCount) {
   };
 }
 
-// 通过 CDP 真实点击页面里第一个文本匹配的元素（先把元素滚到视口中央，再让后台用 Input.dispatchMouseEvent 真按一下）。
-// 解决“合成点击被 Flow 框架忽略 → 模式/模型切不动”的根因。
-async function cdpClickByText(texts, selector) {
+// 通过合成事件点击页面里第一个文本匹配的元素。
+// 注意：旧版本(v1.3.x)曾引入 chrome.debugger(CDP) 真实点击，但 Flow 有反调试机制——
+// 一旦 attach debugger 页面就会闪「已经开始调试此浏览器」并踢出/重载，整个扩展「不动」。
+// v1.6/v1.7 正是纯靠合成事件(.click() / execCommand / KeyboardEvent)驱动的，实测可用，现回归此方案。
+async function clickByText(texts, selector) {
   const btn = findButtonByText(texts, selector);
   if (!btn) return false;
   try { btn.scrollIntoView({ block: 'center' }); } catch (_) {}
   await sleep(200);
-  // 取不到有效坐标（节点未挂载/被遮挡）就立刻回退到合成点击，不至于阻塞
-  let rect = null;
-  try {
-    const r = btn.getBoundingClientRect && btn.getBoundingClientRect();
-    if (r && r.width > 0 && r.height > 0) rect = { x: r.x, y: r.y, width: r.width, height: r.height };
-  } catch (_) {}
-  if (!rect) { btn.click(); await sleep(300); return true; }
-  const resp = await chrome.runtime.sendMessage({ cmd: 'cdpClick', rect });
-  if (!resp || !resp.ok) {
-    // CDP 失败时回退到合成点击（不至于完全无效）
-    btn.click();
-    await sleep(300);
-  }
+  try { btn.click(); } catch (_) {}
+  await sleep(300);
   return true;
 }
 
-// 选模式：必须用 CDP 真实点击，否则 Flow 一直留在用户上次选的「智能体」模式 → 报“必须提供参考”
+// 选模式：合成点击模式芯片（best-effort，被框架忽略也只是沿用默认，不致命）
 async function setMode(mode) {
   const map = {
     text2img: ['图片', '图像', 'Image', 'Images', '文生图', 'Text to image'],
@@ -321,51 +313,41 @@ async function setMode(mode) {
   const texts = map[mode];
   if (!texts) return;
   // 模式芯片通常不是 button，多是 div；把候选范围放宽
-  await cdpClickByText(texts, 'button, [role="button"], [role="tab"], [role="option"], [role="radio"], div, span, a');
+  await clickByText(texts, 'button, [role="button"], [role="tab"], [role="option"], [role="radio"], div, span, a');
   await sleep(600);
 }
 
-// 设画幅（CDP 真实点击）
+// 设画幅（合成点击）
 async function setAspectRatio(ratio) {
   if (!ratio) return false;
   const wanted = String(ratio).trim();
-  const ok = await cdpClickByText([wanted], 'button, [role="button"], [role="radio"], [role="option"], label, div');
+  const ok = await clickByText([wanted], 'button, [role="button"], [role="radio"], [role="option"], label, div');
   return ok;
 }
 
-// 选模型（CDP 真实点击）
+// 选模型（合成点击：先点触发器展开，再点匹配项）
 async function setModel(model) {
   if (!model) return;
   const trigger = findButtonByText([model, '模型', 'Model', 'Veo', 'Nano', 'Imagen', 'Gemini'], 'button, [role="button"], div, span, a');
   if (!trigger) return;
   try { trigger.scrollIntoView({ block: 'center' }); } catch (_) {}
   await sleep(150);
-  const r = trigger.getBoundingClientRect();
-  if (r && r.width) {
-    await chrome.runtime.sendMessage({ cmd: 'cdpClick', rect: { x: r.x, y: r.y, width: r.width, height: r.height } });
-  } else {
-    trigger.click();
-  }
+  try { trigger.click(); } catch (_) {}
   await sleep(600);
   // 再点一次匹配项（部分设计需要先展开下拉）
   const opt = findButtonByText([model], 'button, [role="button"], [role="option"], div, span, a');
   if (opt && opt !== trigger) {
     try { opt.scrollIntoView({ block: 'center' }); } catch (_) {}
     await sleep(150);
-    const r2 = opt.getBoundingClientRect();
-    if (r2 && r2.width) {
-      await chrome.runtime.sendMessage({ cmd: 'cdpClick', rect: { x: r2.x, y: r2.y, width: r2.width, height: r2.height } });
-    } else {
-      opt.click();
-    }
+    try { opt.click(); } catch (_) {}
     await sleep(400);
   }
 }
 
-// 设视频时长（CDP 真实点击）
+// 设视频时长（合成点击）
 async function setDuration(duration) {
   if (!duration) return;
-  await cdpClickByText([duration], 'button, [role="button"], [role="option"], div, span');
+  await clickByText([duration], 'button, [role="button"], [role="option"], div, span');
   await sleep(400);
 }
 
@@ -473,49 +455,10 @@ async function clickGenerate() {
   if (btn && !btn.disabled) btn.click();
 }
 
-// ===== 真实屏幕输入（CDP）封装 =====
-// 定位输入框与提交按钮的视口坐标，交给后台用 Chrome 原生输入引擎驱动。
-// 为什么绕一圈走后台：chrome.debugger（CDP）只能在后台 service worker 里调用，
-// 内容脚本没有 debugger 权限，所以这里负责“定位 + 校验”，后台负责“真实输入”。
-function locateControls() {
-  const tb = document.querySelector('div[role="textbox"]');
-  if (!tb) return { ok: false, error: '未找到提示词输入框（可能页面结构变了或不在项目页）' };
-  try { tb.scrollIntoView({ block: 'center' }); } catch (_) {}
-  const r = tb.getBoundingClientRect();
-  const textboxRect = { x: r.x, y: r.y, width: r.width, height: r.height };
+// v1.3.21: 已彻底移除 CDP（chrome.debugger）真实输入封装（cdpType / cdpClickSubmit / locateControls）。
+// 原因：Flow 有反调试，一旦 attach debugger 页面就闪「已经开始调试此浏览器」并踢出/重载，导致扩展「不动」。
+// 提交改回纯合成事件：提示词用 setPrompt（execCommand），提交用 clickGenerate（回车 + 点击箭头）。
 
-  const btn = findGenerateButton(false) || findGenerateButton(true);
-  let submitRect = null;
-  if (btn) {
-    try { btn.scrollIntoView({ block: 'center' }); } catch (_) {}
-    const br = btn.getBoundingClientRect();
-    submitRect = { x: br.x, y: br.y, width: br.width, height: br.height };
-  }
-  return { ok: true, textboxRect, submitRect };
-}
-
-// 用真实输入把提示词敲进输入框（后台走 CDP 的 Input.insertText）
-async function cdpType(prompt) {
-  const loc = locateControls();
-  if (!loc.ok) throw new Error(loc.error);
-  const resp = await chrome.runtime.sendMessage({ cmd: 'cdpType', rect: loc.textboxRect, text: prompt });
-  if (!resp || !resp.ok) throw new Error((resp && resp.error) || 'CDP 打字失败');
-  // 校验：框里是否真的出现提示词（CDP 是受信事件，Flow 的 React 一旦收到，innerText 必然更新）
-  const tb = document.querySelector('div[role="textbox"]');
-  const got = tb ? (tb.innerText || '').trim() : '';
-  if (!got.includes(prompt.slice(0, 4))) throw new Error('CDP 写入未被 Flow 接受（框内未见提示词）');
-  return true;
-}
-
-// 用真实鼠标点击按下提交箭头（后台走 CDP 的 Input.dispatchMouseEvent）
-async function cdpClickSubmit() {
-  const loc = locateControls();
-  if (!loc.ok) throw new Error(loc.error);
-  if (!loc.submitRect) throw new Error('未定位到提交按钮坐标');
-  const resp = await chrome.runtime.sendMessage({ cmd: 'cdpClick', rect: loc.submitRect });
-  if (!resp || !resp.ok) throw new Error((resp && resp.error) || 'CDP 点击失败');
-  return true;
-}
 
 async function waitForVisible(sel, timeoutMs) {
   const t0 = Date.now();
@@ -667,11 +610,7 @@ async function clickUploadTrigger() {
   if (!trigger) return false;
   try { trigger.scrollIntoView({ block: 'center' }); } catch (_) {}
   await sleep(200);
-  let rect = null;
-  try { const r = trigger.getBoundingClientRect && trigger.getBoundingClientRect(); if (r && r.width > 0 && r.height > 0) rect = { x: r.x, y: r.y, width: r.width, height: r.height }; } catch (_) {}
-  if (!rect) { trigger.click(); await sleep(600); return true; }
-  const resp = await chrome.runtime.sendMessage({ cmd: 'cdpClick', rect });
-  if (!resp || !resp.ok) { trigger.click(); }
+  try { trigger.click(); } catch (_) {}
   await sleep(600);
   return true;
 }
@@ -837,23 +776,15 @@ async function generateOne(prompt, options = {}) {
   const knownKeys = snapshotMediaUrls();
   const startCount = countMedia();
 
-  // 真正把提示词敲进框 + 点下提交：优先用 Chrome 原生输入引擎（CDP，受信事件，Flow 必响应），
-  // 失败再回退到合成事件。这是修复“屏幕不动 / 点了不生成”的关键。
+  // 真正把提示词敲进框 + 点下提交：纯合成事件（setPrompt 用 execCommand、clickGenerate 用回车 + 点击箭头）。
+  // 旧版本曾用 CDP(chrome.debugger) 真实输入，但会触发 Flow 反调试而踢出页面；现回归 v1.6/v1.7 的纯合成事件方案。
   async function typePrompt() {
-    try {
-      await cdpType(prompt);
-    } catch (e) {
-      console.log('[Flow扩展] CDP 打字失败，回退合成事件: ' + ((e && e.message) || e));
-      try { await setPrompt(prompt); } catch (e2) { throw new Error('填词失败：' + ((e2 && e2.message) || e2)); }
-    }
+    // v1.3.21: 纯合成事件写入提示词（CDP 已移除，因其触发 Flow 反调试导致页面被踢出）
+    try { await setPrompt(prompt); } catch (e2) { throw new Error('填词失败：' + ((e2 && e2.message) || e2)); }
   }
   async function clickSubmit() {
-    try {
-      await cdpClickSubmit();
-    } catch (e) {
-      console.log('[Flow扩展] CDP 点击失败，回退合成事件: ' + ((e && e.message) || e));
-      try { await clickGenerate(); } catch (e2) { throw new Error('点击生成失败：' + ((e2 && e2.message) || e2)); }
-    }
+    // v1.3.21: 纯合成事件提交（回车 + 点击提交箭头，均已验证可用）
+    try { await clickGenerate(); } catch (e2) { throw new Error('点击生成失败：' + ((e2 && e2.message) || e2)); }
   }
 
   const items = [];

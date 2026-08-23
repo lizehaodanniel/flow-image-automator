@@ -1,5 +1,6 @@
-// AICheatCode · 后台 Service Worker v1.3.19
+// AICheatCode · 后台 Service Worker v1.3.21
 // 职责：找/开 Flow 标签页 → worker 池把每条提示词派给 content script → 下载（可建文件夹）→ 广播进度（含重试）
+// v1.3.21：移除 chrome.debugger/CDP 真实输入引擎（其触发 Flow 反调试、页面被踢出）。驱动改由 content script 纯合成事件完成。
 const DOWNLOAD_PREFIX = 'flow_';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -64,82 +65,11 @@ function notify(msg) {
   chrome.runtime.sendMessage(msg).catch(() => {});
 }
 
-// ===== 真实屏幕输入引擎（Chrome DevTools Protocol）=====
-// 之前的版本用 JS 合成的 dispatchEvent / execCommand 写框、点按钮，
-// 但 Flow 这类前端框架会忽略“非受信(untrusted)”事件，导致屏幕“不动”。
-// CDP 的 Input.insertText / Input.dispatchMouseEvent 发送的是与真人完全一致的“受信”输入，
-// React 等框架无法区分，从而真正驱动 Flow。这正是商业插件“控制屏幕”的做法。
+// v1.3.21: 已彻底移除「真实屏幕输入引擎（Chrome DevTools Protocol / chrome.debugger）」。
+// 原因：Flow 有反调试机制，一旦 attach debugger 页面就会闪「已经开始调试此浏览器」并踢出/重载，导致扩展「不动」。
+// 现回归 v1.6/v1.7 的纯合成事件驱动方案（内容脚本用 .click() / execCommand / KeyboardEvent），实测可用。
 
-let _dbgAttached = new Set(); // 记录已 attach 的 tabId，避免重复 attach
-
-function cdpAttach(tabId) {
-  return new Promise((resolve, reject) => {
-    if (_dbgAttached.has(tabId)) return resolve();
-    chrome.debugger.attach({ tabId }, '1.3', () => {
-      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message || 'debugger attach 失败'));
-      else { _dbgAttached.add(tabId); resolve(); }
-    });
-  });
-}
-function cdpDetach(tabId) {
-  return new Promise((resolve) => {
-    if (!_dbgAttached.has(tabId)) return resolve();
-    chrome.debugger.detach({ tabId }, () => {
-      _dbgAttached.delete(tabId);
-      resolve();
-    });
-  });
-}
-function cdpSend(tabId, method, params) {
-  return new Promise((resolve, reject) => {
-    chrome.debugger.sendCommand({ tabId }, method, params || {}, (res) => {
-      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message || (method + ' 失败')));
-      else resolve(res);
-    });
-  });
-}
-
-// 把提示词真正“敲”进某个坐标处的输入框：先点一下聚焦 → 全选并清空（兼容 Mac Cmd+A / Win Ctrl+A）→ insertText
-async function cdpTypeInto(tabId, rect, text) {
-  await cdpAttach(tabId);
-  try {
-    const cx = Math.round(rect.x + rect.width / 2);
-    const cy = Math.round(rect.y + rect.height / 2);
-    // 1) 点进去聚焦
-    await cdpSend(tabId, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: cx, y: cy, button: 'left', clickCount: 1 });
-    await cdpSend(tabId, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: cx, y: cy, button: 'left', clickCount: 1 });
-    await sleep(150);
-    // 2) 全选（Mac 用 Meta/Cmd，Win 用 Ctrl，都发一遍更稳）+ 删除
-    for (const mod of [4, 2]) {
-      await cdpSend(tabId, 'Input.dispatchKeyEvent', { type: 'keyDown', key: 'a', modifiers: mod });
-      await cdpSend(tabId, 'Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', modifiers: mod });
-    }
-    await cdpSend(tabId, 'Input.dispatchKeyEvent', { type: 'keyDown', key: 'Delete' });
-    await cdpSend(tabId, 'Input.dispatchKeyEvent', { type: 'keyUp', key: 'Delete' });
-    await sleep(120);
-    // 3) 以受信方式整段插入（React 的 onInput 会触发，state 真正更新）
-    await cdpSend(tabId, 'Input.insertText', { text });
-    await sleep(200);
-  } finally {
-    await cdpDetach(tabId);
-  }
-}
-
-// 在坐标处真正“按”一下按钮（受信鼠标事件，Flow 必响应）
-async function cdpClickAt(tabId, rect) {
-  await cdpAttach(tabId);
-  try {
-    const cx = Math.round(rect.x + rect.width / 2);
-    const cy = Math.round(rect.y + rect.height / 2);
-    await cdpSend(tabId, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: cx, y: cy, button: 'left', clickCount: 1 });
-    await cdpSend(tabId, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: cx, y: cy, button: 'left', clickCount: 1 });
-    await sleep(200);
-  } finally {
-    await cdpDetach(tabId);
-  }
-}
-
-// 在 item 之间重载 Flow 标签页，拿到全新画布（新版 Flow UI 无“新建项目”按钮，
+// 在 item 之间重载 Flow 标签页，拿到全新画布（新版 Flow UI 无"新建项目"按钮，
 // 重载是拿到干净画布、避免图生图链式漂移最稳妥的方式）。重载后 content script 会重新注入。
 async function reloadTabForFresh(tabId) {
   try {
@@ -269,23 +199,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     sendResponse({ ok: true });
     return true;
   }
-  if (msg.cmd === 'cdpType') {
-    // content script 已定位好输入框坐标，这里用真实输入把提示词敲进去
-    const tabId = _sender.tab && _sender.tab.id;
-    if (!tabId) { sendResponse({ ok: false, error: '无标签页上下文' }); return true; }
-    cdpTypeInto(tabId, msg.rect, msg.text)
-      .then(() => sendResponse({ ok: true }))
-      .catch((e) => sendResponse({ ok: false, error: String((e && e.message) || e) }));
-    return true;
-  }
-  if (msg.cmd === 'cdpClick') {
-    const tabId = _sender.tab && _sender.tab.id;
-    if (!tabId) { sendResponse({ ok: false, error: '无标签页上下文' }); return true; }
-    cdpClickAt(tabId, msg.rect)
-      .then(() => sendResponse({ ok: true }))
-      .catch((e) => sendResponse({ ok: false, error: String((e && e.message) || e) }));
-    return true;
-  }
+  // v1.3.21: 已移除 cmd:'cdpType' / cmd:'cdpClick' 处理（CDP 触发 Flow 反调试，导致页面被踢出）。驱动改回纯合成事件。
 });
 
 chrome.runtime.onInstalled.addListener(() => {
