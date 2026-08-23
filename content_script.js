@@ -1,4 +1,4 @@
-// AICHeatCode · Content Script v1.3.24
+// AICHeatCode · Content Script v1.3.25
 // 跑在 https://labs.google/fx/* 上。任务：进入项目页 → 选模式/模型/画幅/时长 → 填词 → 点生成 → 取媒体。
 // v1.3.18：兼容「新版 Flow UI」（isVisible 替代 offsetParent；新版入口/生成按钮识别）。
 // v1.3.19：① "生成已开始"检测失败不再误中止；② 上传验证改为"任意新增 img"。③ 错误自带完整诊断。
@@ -9,7 +9,12 @@
 // v1.3.23：ping 回传内容脚本版本；配合侧边栏自检，一眼看出“未注入 / 版本不匹配 / 旧版残留”。
 // v1.3.24：彻底重构图片上传（修复“多文件逐个注入互相覆盖、只剩最后一张”的真根因；三种策略 + 逐步日志诊断；
 //          明确指出 Flow 新版上传入口可能依赖原生文件框、扩展无法自动填充，引导改用「文生图」或手动上传参考图）。
+// v1.3.25：文生图也“完全不动” → 真根因在【共享驱动链路】，不在上传。① generateOne 全程加执行轨迹日志（[Flow] 前缀，
+//          每步打 console + 失败时随诊断返回，一眼看出卡在 进画布/填词/提交/等结果 哪一步）；② setPrompt 增 beforeinput 事件兜底 +
+//          写后检测“提交按钮是否真的变可用”（若 DOM 有字但按钮仍 disabled，即合成事件没进 Flow 的 React state 的实锤）；
+//          ③ 自检卡片新增「内容脚本版本 vs 扩展版本」不一致告警（多为加载了旧版/多份扩展）。
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const SELF_VERSION = (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '1.3.25';
 const PLACEHOLDER_KEY = 'placeholder';
 
 // 在页面里找“按钮文字/aria-label 包含指定词”的元素。selector 控制搜索范围（避免误点普通 div）。
@@ -238,25 +243,29 @@ async function setPrompt(text) {
   // 2) 写入新文本
   let ok = writeViaExec();
   if (!ok) {
-    // 兜底：直接写 DOM 并派发 input 事件（部分自定义编辑器不响应 execCommand 时）
+    // 兜底A：直接写 DOM 并派发 beforeinput + input 事件（React 系编辑器多在 beforeinput/input 上挂 onChange）
     try {
       inp.textContent = '';
       inp.innerText = text;
+      inp.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: text, bubbles: true, cancelable: true }));
       inp.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
       ok = true;
     } catch (_) { ok = false; }
   }
   await sleep(400);
 
-  // 3) 校验：若仍未真正写入（Flow 没收到），再尝试一次 selectAll + insertText
+  // 3) 校验：若仍未真正写入（Flow 没收到），再尝试一次 selectAll + insertText + beforeinput
   const got = (inp.innerText || '') + (inp.textContent || '');
   if (!got.includes(text)) {
     placeCaret();
     try { document.execCommand('selectAll'); } catch (_) {}
     try { document.execCommand('delete'); } catch (_) {}
     writeViaExec();
+    try { inp.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: text, bubbles: true, cancelable: true })); } catch (_) {}
+    try { inp.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text })); } catch (_) {}
     await sleep(300);
   }
+  console.log('[Flow] setPrompt 写后 DOM 含文本=' + (((inp.innerText || '') + (inp.textContent || '')).includes(text)) + ' text="' + ((inp.innerText || inp.textContent || '').toString().slice(0, 40)) + '"');
 }
 
 // 失败时抓取真实页面状态，便于定位（不再靠猜）
@@ -431,32 +440,42 @@ function findGenerateButtonAnyState() {
 }
 
 async function clickGenerate() {
+  // 注意：这里用 AnyState（不跳过 disabled），避免“按钮一直是 disabled → 永远拿不到按钮 → 啥也不点”的死局。
+  // 若提示词没进 Flow 的 React state，按钮就会一直 disabled —— 那是真问题，下面会打明确警告，而不是默默不动。
   let btn = null;
-  for (let i = 0; i < 60; i++) {
-    btn = findGenerateButton();
-    if (btn && !btn.disabled) break;
+  for (let i = 0; i < 40; i++) {
+    btn = findGenerateButtonAnyState();
+    if (btn) break;
     await sleep(500);
   }
   if (!btn) throw new Error('未找到生成按钮（按钮可能改版）。' + fullDiagnosticDump());
+  console.log('[Flow] clickGenerate：找到提交按钮 disabled=' + btn.disabled + ' label="' + (btn.innerText || '').replace(/\s+/g, ' ').slice(0, 30) + '"');
   try { btn.scrollIntoView({ block: 'center' }); } catch (_) {}
 
-  // 方式 1（首选）：在提示词输入框上模拟按回车键 — 这是 Flow 最直接的提交方式，
-  // 很多情况下「点击 → 箭头」因事件冒泡或框架拦截而不触发，按 Enter 反而更稳。
+  // 方式 1（首选）：在提示词输入框上模拟按回车键 — 这是 Flow 最直接的提交方式
   const tb = document.querySelector('div[role="textbox"]');
   if (tb) {
     try { tb.focus(); } catch (_) {}
-    const mk = (type) => new KeyboardEvent(type, {
-      key: 'Enter', code: 'Enter', keyCode: 13, which: 13,
-      bubbles: true, cancelable: true,
-    });
-    tb.dispatchEvent(mk('keydown'));
-    tb.dispatchEvent(mk('keypress'));
-    tb.dispatchEvent(mk('keyup'));
+    for (let k = 0; k < 3; k++) {
+      const mk = (type) => new KeyboardEvent(type, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true });
+      tb.dispatchEvent(mk('keydown')); tb.dispatchEvent(mk('keypress')); tb.dispatchEvent(mk('keyup'));
+      await sleep(200);
+    }
+    // 也直接在按钮上发回车（部分实现监听按钮 keydown）
+    try { btn.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true })); } catch (_) {}
     await sleep(300);
   }
-  // 方式 2（兜底）：点击提交箭头按钮（若 Enter 已让按钮变 disabled，则跳过避免重复提交）
-  btn = findGenerateButton();
-  if (btn && !btn.disabled) btn.click();
+  // 方式 2：点击提交箭头（即使 disabled 也试一次——合成点击偶尔能绕过 disabled 触发框架 onClick）
+  btn = findGenerateButtonAnyState() || btn;
+  try { btn.click(); } catch (_) {}
+  // 方式 3：兜底再点一次（应对首次点击被框架去重/吞掉）
+  await sleep(400);
+  try { btn.click(); } catch (_) {}
+
+  if (btn.disabled) {
+    console.warn('[Flow] 提交按钮点击后仍处于 disabled —— 提示词很可能没进入 Flow 的 React state（合成事件未生效）。' +
+      ' 请打开 DevTools Console 看 [Flow] / [Flow上传] 日志，连同面板里的「执行轨迹」一起发我，我据此定位 Flow 新编辑器到底监听哪个事件。');
+  }
 }
 
 // v1.3.21: 已彻底移除 CDP（chrome.debugger）真实输入封装（cdpType / cdpClickSubmit / locateControls）。
@@ -755,9 +774,12 @@ async function uploadImagesToFlow(dataUrls, mode) {
 }
 
 async function generateOne(prompt, options = {}) {
+  const dbg = [];
+  const D = (s) => { dbg.push(s); console.log('[Flow] ' + s); };
   const count = Math.max(1, Math.min(8, options.count || 1));
   const aspectRatio = options.aspectRatio || '';
   const mode = options.mode || 'text2img';
+  D('开始 generateOne: mode=' + mode + ' effectiveMode=' + (options.charRef ? 'img2img' : mode) + ' prompt="' + prompt.slice(0, 40) + '" count=' + count);
 
   // ===== 角色参考图：固定人物（视觉一致）=====
   // 启用后把参考图作为图生图(img2img)的基准图，每张批量图都基于同一人物生成。
@@ -791,13 +813,16 @@ async function generateOne(prompt, options = {}) {
 
   if (newProject) {
     const ok = await ensureNewProject();
+    D('ensureNewProject 结果=' + ok + ' (isNewFlowUI=' + isNewFlowUI() + ')');
     if (!ok) {
       const ok2 = await ensureCanvas();
-      if (!ok2) return { ok: false, error: '未能进入编辑器画布（超时）。请确认已在 Flow 项目页并登录。', diagnostic: fullDiagnosticDump() };
+      D('ensureCanvas 结果=' + ok2);
+      if (!ok2) return { ok: false, error: '未能进入编辑器画布（超时）。请确认已在 Flow 项目页并登录。', diagnostic: fullDiagnosticDump() + '\n\n执行轨迹:\n' + dbg.join('\n') };
     }
   } else {
     const ok = await ensureCanvas();
-    if (!ok) return { ok: false, error: '未能进入编辑器画布（超时）。' };
+    D('ensureCanvas 结果=' + ok);
+    if (!ok) return { ok: false, error: '未能进入编辑器画布（超时）。', diagnostic: fullDiagnosticDump() + '\n\n执行轨迹:\n' + dbg.join('\n') };
   }
 
   // 选模式/模型/画幅（best-effort：这些合成点击即便被框架忽略也只是沿用默认，不致命）
@@ -860,16 +885,21 @@ async function generateOne(prompt, options = {}) {
       await sleep(500);
     }
     if (!verifyPromptInBox(prompt, promptInBox)) {
-      return { ok: false, error: '提示词写入后读回不匹配：预期="' + prompt.slice(0, 40) + '..."，实际="' + promptInBox.slice(0, 60) + '"。Flow 可能改了输入框行为，请把「🔍 复制页面诊断」发我。', diagnostic: fullDiagnosticDump() };
+      return { ok: false, error: '提示词写入后读回不匹配：预期="' + prompt.slice(0, 40) + '..."，实际="' + promptInBox.slice(0, 60) + '"。Flow 可能改了输入框行为，请把「🔍 复制页面诊断」发我。', diagnostic: fullDiagnosticDump() + '\n\n执行轨迹:\n' + dbg.join('\n') };
     }
+    const genBtn0 = findGenerateButtonAnyState();
+    D('填词后：DOM含提示词=' + verifyPromptInBox(prompt, promptInBox) + ' | 提交按钮存在=' + !!genBtn0 + ' | disabled=' + (genBtn0 ? genBtn0.disabled : 'n/a') + (genBtn0 ? (' | label="' + (genBtn0.innerText || '').replace(/\s+/g, ' ').slice(0, 30) + '"') : ''));
     try { await clickSubmit(); } catch (e) {
-      return { ok: false, error: (e && e.message) || String(e) };
+      return { ok: false, error: (e && e.message) || String(e), diagnostic: '\n\n执行轨迹:\n' + dbg.join('\n') };
     }
+    const genBtn1 = findGenerateButtonAnyState();
+    D('点击提交后：提交按钮 disabled=' + (genBtn1 ? genBtn1.disabled : 'n/a') + ' | 输入框是否已被清空(提交成功标志)=' + (readPromptInBox().length === 0));
 
     // 1) 确认页面确实进入了生成状态。新 UI 的“生成中”信号可能与旧版不同，
     //    即便没检测到明确信号也【不中止】——直接继续等结果，MEDIA 真正出现才算数。
     //    这避免了“其实已经在生成、只是信号没识别到”时误中止（这正是“点了不生成”的常见根因）。
     const started = await confirmGenerationStarted(startCount, 25000, promptInBox);
+    D('confirmGenerationStarted 结果=' + started + '（若 false 不代表失败，会继续等结果）');
     if (!started) {
       try {
         const d = diagnose(startCount);
@@ -890,6 +920,7 @@ async function generateOne(prompt, options = {}) {
 
     // 4) 只收集“不在已知集合里”的媒体（即本次新生成的）
     const { imgs, vids } = await collectNewMedia(knownKeys, timeoutMs);
+    D('collectNewMedia 结果：imgs=' + imgs.length + ' vids=' + vids.length + '（页面总媒体数=' + countMedia() + '）');
     for (const im of imgs.slice(0, 8)) items.push(await mediaToPayload(im, 'img'));
     for (const v of vids.slice(0, 8)) items.push(await mediaToPayload(v, 'video'));
     for (const m of [...imgs, ...vids]) {
@@ -899,7 +930,7 @@ async function generateOne(prompt, options = {}) {
   }
 
   if (!items.length) {
-    return { ok: false, error: '出图完成但未捕获到结果（可能渲染方式变了，需核对选择器）' };
+    return { ok: false, error: '出图完成但未捕获到结果（可能渲染方式变了，或提示词压根没提交成功 → Flow 没生成）。', diagnostic: '【页面诊断】\n' + dumpPageStructure() + '\n\n执行轨迹:\n' + dbg.join('\n') };
   }
   // 去重：Flow 在生成过程中会反复把图片的 blob URL 重新生成一遍（URL 变了，但图片内容/dataUrl 不变），
   // 仅按 URL 判重会把同一张图当成新图抓多次。按 dataUrl 去重，保证每张唯一图片只下 1 次。
@@ -962,7 +993,7 @@ function dumpPageStructure() {
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg && msg.cmd === 'ping') {
-    sendResponse({ ok: true, ts: Date.now(), ver: '1.3.24' });
+    sendResponse({ ok: true, ts: Date.now(), ver: SELF_VERSION });
     return true;
   }
   if (msg && msg.cmd === 'diagnose') {

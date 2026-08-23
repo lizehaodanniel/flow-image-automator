@@ -143,7 +143,7 @@ const I18N = {
     'sc.noTab': '未找到',
     'sc.noScript': '未注入',
     'diag.reinjectFail': '自动重新注入失败：{e}。请手动刷新 Flow 页面（F5），或在 chrome://extensions 点 🔄 刷新本扩展后再试。',
-    'diag.noScript': '自动重新注入失败（缺少 scripting 权限或被拦截）：{e}。请到 chrome://extensions 确认 AICHeatCode 已启用、版本 ≥ 1.3.24，并刷新 Flow 页面。',
+    'diag.noScript': '自动重新注入失败（缺少 scripting 权限或被拦截）：{e}。请到 chrome://extensions 确认 AICHeatCode 已启用、版本 ≥ 1.3.25，并刷新 Flow 页面。',
   },
   en: {
     'app.title': 'AICheatCode',
@@ -272,7 +272,7 @@ const I18N = {
     'sc.noTab': 'not found',
     'sc.noScript': 'not injected',
     'diag.reinjectFail': 'Auto re-injection failed: {e}. Please reload the Flow page (F5), or click 🔄 on this extension in chrome://extensions and retry.',
-    'diag.noScript': 'Auto re-injection failed (missing scripting permission or blocked): {e}. Please confirm AICHeatCode is enabled with version ≥ 1.3.24 in chrome://extensions, then reload the Flow page.',
+    'diag.noScript': 'Auto re-injection failed (missing scripting permission or blocked): {e}. Please confirm AICHeatCode is enabled with version ≥ 1.3.25 in chrome://extensions, then reload the Flow page.',
   },
 };
 
@@ -338,8 +338,14 @@ async function selfCheck() {
         });
       } catch (e) { res({ err: (e && e.message) || String(e) }); }
     });
-    if (pr && pr.ok) rows.push(scRow(t('sc.script'), true, 'v' + (pr.ver || '?')));
-    else rows.push(scRow(t('sc.script'), false, (pr && pr.err) || t('sc.noScript')));
+    if (pr && pr.ok) {
+      const csv = pr.ver || '?';
+      const stale = (csv !== extVer);
+      rows.push(scRow(t('sc.script'), !stale, 'v' + csv + (stale ? (' ⚠️ ≠ 扩展 v' + extVer + '，可能加载了旧版/多份扩展！请移除旧扩展后重新加载') : '')));
+      if (stale) {
+        rows.push(scRow('⚠️ 版本不一致', false, '内容脚本=' + csv + ' / 扩展清单=' + extVer + '。强烈建议：chrome://extensions → 移除所有 AICHeatCode → 只保留一份 v' + extVer + ' 重新加载。多份扩展会让消息发到错误的脚本，表现为“完全不动”。'));
+      }
+    } else rows.push(scRow(t('sc.script'), false, (pr && pr.err) || t('sc.noScript')));
   }
   body.innerHTML = rows.join('');
 }
