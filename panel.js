@@ -1,4 +1,4 @@
-// AICheatCode · Side Panel v1.3.18（中英文双语 · 控制/设置 双标签）
+// AICheatCode · Side Panel v1.3.19（中英文双语 · 控制/设置 双标签）
 const $ = (id) => document.getElementById(id);
 
 const listEl = $('list');

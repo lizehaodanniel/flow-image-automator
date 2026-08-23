@@ -1,8 +1,8 @@
-// AICheatCode · Content Script v1.3.18
+// AICheatCode · Content Script v1.3.19
 // 跑在 https://labs.google/fx/* 上。任务：进入项目页 → 选模式/模型/画幅/时长 → 填词 → 点生成 → 取媒体。
-// v1.3.18：兼容「新版 Flow UI」（灰度推送）。新版把提示词框包在 position:fixed 容器里，
-// 导致原有的 offsetParent!==null 可见性判断恒为 false → 一直以为没进编辑器 → 屏幕“不动”。
-// 全部改为 isVisible()（用 getBoundingClientRect + computedStyle 判断）；并新增新版入口/生成按钮识别。
+// v1.3.18：兼容「新版 Flow UI」（isVisible 替代 offsetParent；新版入口/生成按钮识别）。
+// v1.3.19：① “生成已开始”检测失败不再误中止（继续等真实 MEDIA，避免“点了不生成”）；
+// ② 上传验证改为“任意新增 img”更鲁棒（兼容新版上传渲染）；③ 所有错误自动附带完整页面诊断。
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const PLACEHOLDER_KEY = 'placeholder';
 
@@ -450,7 +450,7 @@ async function clickGenerate() {
     if (btn && !btn.disabled) break;
     await sleep(500);
   }
-  if (!btn) throw new Error('未找到生成按钮（按钮可能改版）');
+  if (!btn) throw new Error('未找到生成按钮（按钮可能改版）。' + fullDiagnosticDump());
   try { btn.scrollIntoView({ block: 'center' }); } catch (_) {}
 
   // 方式 1（首选）：在提示词输入框上模拟按回车键 — 这是 Flow 最直接的提交方式，
@@ -544,7 +544,8 @@ function countMedia() {
 // 任一成立即视为已开始。等不到就返回 false。
 async function confirmGenerationStarted(startCount, timeoutMs = 20000, promptText = '') {
   const t0 = Date.now();
-  const busyRe = /\b(generating|creating|loading|生成中|创建中|处理中|working)\b/i;
+  // 新版 Flow UI 的“生成中”文案更杂（正在生成 / 渲染中 / 排队 / 创建中 / generating / rendering ...），放宽匹配。
+  const busyRe = /\b(generating|creating|loading|rendering|processing|queued|working|生成中|创建中|处理中|渲染中|排队中|正在生成|正在创建)\b|生成|创建|渲染|排队/i;
   while (Date.now() - t0 < timeoutMs) {
     // 按钮禁用 / 文案变为生成中（注意：必须用 AnyState 版本，因为生成中按钮是 disabled 的，
     // 普通 findGenerateButton 会跳过它，导致永远检测不到“已开始”，最终被误判为失败而中止）
@@ -556,7 +557,7 @@ async function confirmGenerationStarted(startCount, timeoutMs = 20000, promptTex
       }
     }
     // 进度条 / 忙碌标记
-    if (document.querySelector('[role="progressbar"], [aria-busy="true"], .progress, .spinner, .loader')) {
+    if (document.querySelector('[role="progressbar"], [aria-busy="true"], .progress, .spinner, .loader, [class*="loading"], [class*="Loading"], [class*="spinner"], [class*="Spinner"]')) {
       return true;
     }
     // 输入框提示词被清空 = 已提交（Flow 提交后会把输入框清空）。这是最可靠的“已开始”信号。
@@ -675,26 +676,23 @@ async function uploadViaDropZone(zone, files) {
 // v1.3.17: 记录上传前的 blob/data URL 集合，只把"新增的"算作成功上传。
 // 旧实现只看"页面上有没有图"——只要之前残留了旧图就直接返回 ok=true，根本没上传新参考图。
 async function waitForUploadDone(expected, timeoutMs) {
-  const sel = 'img[src^="blob:"], img[src^="data:"], [class*="thumb"], [class*="Thumb"], [class*="asset"], [class*="Asset"]';
-  const beforeBlobs = new Set(Array.from(document.querySelectorAll('img[src^="blob:"]')).map((i) => i.src));
-  const beforeData = new Set(Array.from(document.querySelectorAll('img[src^="data:"]')).map((i) => i.src));
-  const beforeTotal = beforeBlobs.size + beforeData.size;
+  // 旧版：只认 blob:/data: 缩略图。新版 Flow UI 上传后参考图可能渲染成任意新的 img（含 https/googleusercontent），
+  // 所以改成“上传前快照所有 img 的 src，上传后只要出现任何新增 img 即视为成功”，更鲁棒。
+  const allImgSrcs = () => new Set(Array.from(document.querySelectorAll('img')).map((i) => i.src).filter(Boolean));
+  const before = allImgSrcs();
   const t0 = Date.now();
-  while (Date.now() - t0 < (timeoutMs || 25000)) {
-    const nowBlobs = Array.from(document.querySelectorAll('img[src^="blob:"]')).map((i) => i.src);
-    const nowData = Array.from(document.querySelectorAll('img[src^="data:"]')).map((i) => i.src);
-    const newBlobs = nowBlobs.filter((s) => !beforeBlobs.has(s));
-    const newData = nowData.filter((s) => !beforeData.has(s));
-    const newCount = newBlobs.length + newData.length;
+  while (Date.now() - t0 < (timeoutMs || 30000)) {
+    const now = allImgSrcs();
+    let newCount = 0;
+    for (const s of now) if (!before.has(s)) newCount++;
     if (newCount >= expected) return { ok: true, newCount };
     await sleep(800);
   }
   // 最后再算一次：有没有任何"新增"的图
-  const nowBlobs = Array.from(document.querySelectorAll('img[src^="blob:"]')).map((i) => i.src);
-  const nowData = Array.from(document.querySelectorAll('img[src^="data:"]')).map((i) => i.src);
-  const newBlobs = nowBlobs.filter((s) => !beforeBlobs.has(s));
-  const newData = nowData.filter((s) => !beforeData.has(s));
-  if (newBlobs.length + newData.length > 0) return { ok: true, newCount: newBlobs.length + newData.length };
+  const now2 = allImgSrcs();
+  let newCount = 0;
+  for (const s of now2) if (!before.has(s)) newCount++;
+  if (newCount > 0) return { ok: true, newCount };
   return { ok: false, error: '上传后未在页面检测到新缩略图（Flow 的上传 UI 可能与预期不同，或上次残留的旧图未清空）。请点「🔍 复制页面诊断」把上传区 DOM 发我，我据此精修选择器。', diagnostic: dumpUploadArea() };
 }
 function dumpUploadArea() {
@@ -786,7 +784,7 @@ async function generateOne(prompt, options = {}) {
     const ok = await ensureNewProject();
     if (!ok) {
       const ok2 = await ensureCanvas();
-      if (!ok2) return { ok: false, error: '未能进入编辑器画布（超时）。请确认已在 Flow 项目页并登录。' };
+      if (!ok2) return { ok: false, error: '未能进入编辑器画布（超时）。请确认已在 Flow 项目页并登录。', diagnostic: fullDiagnosticDump() };
     }
   } else {
     const ok = await ensureCanvas();
@@ -861,38 +859,23 @@ async function generateOne(prompt, options = {}) {
       await sleep(500);
     }
     if (!verifyPromptInBox(prompt, promptInBox)) {
-      return { ok: false, error: '提示词写入后读回不匹配：预期="' + prompt.slice(0, 40) + '..."，实际="' + promptInBox.slice(0, 60) + '"。Flow 可能改了输入框行为，请把「🔍 复制页面诊断」发我。' };
+      return { ok: false, error: '提示词写入后读回不匹配：预期="' + prompt.slice(0, 40) + '..."，实际="' + promptInBox.slice(0, 60) + '"。Flow 可能改了输入框行为，请把「🔍 复制页面诊断」发我。', diagnostic: fullDiagnosticDump() };
     }
     try { await clickSubmit(); } catch (e) {
       return { ok: false, error: (e && e.message) || String(e) };
     }
 
-    // 1) 确认页面确实进入了生成状态；等不到就直接中止，绝不下载任何东西
-    const started = await confirmGenerationStarted(startCount, 20000, promptInBox);
+    // 1) 确认页面确实进入了生成状态。新 UI 的“生成中”信号可能与旧版不同，
+    //    即便没检测到明确信号也【不中止】——直接继续等结果，MEDIA 真正出现才算数。
+    //    这避免了“其实已经在生成、只是信号没识别到”时误中止（这正是“点了不生成”的常见根因）。
+    const started = await confirmGenerationStarted(startCount, 25000, promptInBox);
     if (!started) {
-      // 抓取真实页面状态，附在错误里，便于定位（不再盲猜）
-      const d = diagnose(startCount);
-      const diag = [
-        '输入框是否含提示词=' + d.textboxHasPrompt,
-        '输入框实际内容="' + d.textboxText + '"',
-        '生成按钮=' + d.generateButton,
-        '按钮HTML=' + d.generateButtonHtml,
-        '媒体数(前/后)=' + d.mediaCountBefore + '/' + d.mediaCountNow,
-        '转圈/进度条=' + d.spinnerFound,
-        '页面生成中文案=' + (d.busyTextFound || '(无)'),
-      ].join('\n');
-      // 同时打到控制台，便于从 DevTools Console 复制完整诊断（不受面板截断影响）
       try {
-        console.log('[Flow扩展诊断]\n' + diag);
-        console.log('[Flow扩展诊断-按钮HTML] ' + d.generateButtonHtml);
+        const d = diagnose(startCount);
+        console.warn('[Flow扩展] 未检测到明确“生成开始”信号，仍继续等待结果（避免误中止）。' +
+          ' 输入框含提示词=' + d.textboxHasPrompt + ' 生成按钮=' + d.generateButton +
+          ' 媒体数=' + d.mediaCountBefore + '/' + d.mediaCountNow + ' 转圈=' + d.spinnerFound);
       } catch (_) {}
-      return {
-        ok: false,
-        error: '已点击生成，但 Flow 没有进入生成状态。已安全中止，未下载任何旧图。',
-        diagnostic: '【诊断】\n' + diag +
-          '\n常见原因：① 输入框的提示词没真正写进 Flow（React 没收到）；② 点中的不是真正的提交按钮；③ 弹窗/素材面板挡住了提交按钮。' +
-          '\n请把这段【诊断】发我，我按真实情况修。'
-      };
     }
 
     // 2) 等约 2 秒，让 Flow 把“旧图”的 blob 地址重渲染稳定（这是误下载旧图的根因）
@@ -936,6 +919,13 @@ async function generateOne(prompt, options = {}) {
 
 // 把 Flow 页面的真实结构 dump 出来（输入框候选 / 全部按钮 / 输入框所在输入栏的按钮），
 // 供用户在不打开 DevTools 的情况下，点一下按钮就能把结构发给我精准定位。
+function fullDiagnosticDump() {
+  try {
+    return '【页面诊断】\n' + dumpPageStructure() + '\n\n' + dumpUploadArea();
+  } catch (_) {
+    return '(诊断生成失败)';
+  }
+}
 function dumpPageStructure() {
   const L = [];
   const log = (s) => L.push(s);

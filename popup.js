@@ -1,4 +1,4 @@
-// AICheatCode · Popup v1.3.18（与面板一致视觉，紧凑单页）
+// AICheatCode · Popup v1.3.19（与面板一致视觉，紧凑单页）
 const $ = (id) => document.getElementById(id);
 
 const listEl = $('list');
