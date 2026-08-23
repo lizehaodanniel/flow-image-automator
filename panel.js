@@ -133,6 +133,7 @@ const I18N = {
     'st.charrefAdded': '已设置角色参考图：{n}',
     'st.charrefFail': '参考图读取失败',
     'st.charrefTooBig': '图片超过 5MB，可能无法长期保存（扩展存储上限）。建议压缩到 2MB 以内。',
+    'charref.warn': '⚠️ 已启用「角色固定」→ 自动切到图生图并需要上传参考图。Flow 新版上传入口可能依赖原生文件框、扩展无法自动选文件；若上传失败，请先手动点「添加媒体」传好参考图再运行，或改用「文生图」。',
     'selfcheck.title': '🔧 自检',
     'selfcheck.recheck': '重新检测',
     'sc.ext': '扩展版本',
@@ -142,7 +143,7 @@ const I18N = {
     'sc.noTab': '未找到',
     'sc.noScript': '未注入',
     'diag.reinjectFail': '自动重新注入失败：{e}。请手动刷新 Flow 页面（F5），或在 chrome://extensions 点 🔄 刷新本扩展后再试。',
-    'diag.noScript': '自动重新注入失败（缺少 scripting 权限或被拦截）：{e}。请到 chrome://extensions 确认 AICHeatCode 已启用、版本 ≥ 1.3.23，并刷新 Flow 页面。',
+    'diag.noScript': '自动重新注入失败（缺少 scripting 权限或被拦截）：{e}。请到 chrome://extensions 确认 AICHeatCode 已启用、版本 ≥ 1.3.24，并刷新 Flow 页面。',
   },
   en: {
     'app.title': 'AICheatCode',
@@ -261,6 +262,7 @@ const I18N = {
     'st.charrefAdded': 'Character reference set: {n}',
     'st.charrefFail': 'Failed to read reference image',
     'st.charrefTooBig': 'Image over 5MB may not persist (storage limit). Resize to under 2MB recommended.',
+    'charref.warn': '⚠️ Character lock is ON → mode auto-switched to Image-to-Image and a reference image upload is required. Flow\'s new upload entry may rely on a native file picker that the extension cannot auto-fill; if upload fails, manually click "Add media" to upload the reference first, or switch to Text-to-Image.',
     'selfcheck.title': '🔧 Self-check',
     'selfcheck.recheck': 'Re-check',
     'sc.ext': 'Extension version',
@@ -270,7 +272,7 @@ const I18N = {
     'sc.noTab': 'not found',
     'sc.noScript': 'not injected',
     'diag.reinjectFail': 'Auto re-injection failed: {e}. Please reload the Flow page (F5), or click 🔄 on this extension in chrome://extensions and retry.',
-    'diag.noScript': 'Auto re-injection failed (missing scripting permission or blocked): {e}. Please confirm AICHeatCode is enabled with version ≥ 1.3.23 in chrome://extensions, then reload the Flow page.',
+    'diag.noScript': 'Auto re-injection failed (missing scripting permission or blocked): {e}. Please confirm AICHeatCode is enabled with version ≥ 1.3.24 in chrome://extensions, then reload the Flow page.',
   },
 };
 
@@ -492,6 +494,9 @@ function syncCharRefMode() {
     const chip = document.querySelector('.mode-chip[data-mode="img2img"]');
     if (chip && modeInput.value !== 'img2img') chip.click();
     modeNote.textContent = t('note.img2img');
+    // 重要提示：角色固定会强制走「图生图 + 上传参考图」路径。Flow 新版的上传入口可能依赖原生文件框，
+    // 扩展无法替你自动选文件——若上传失败，请先手动点「添加媒体」把参考图传好再运行，或改用「文生图」。
+    setStatus(t('charref.warn'), 'warn');
   }
 }
 charRefOn.addEventListener('change', syncCharRefMode);
