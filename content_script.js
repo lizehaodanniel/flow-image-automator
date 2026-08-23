@@ -1,4 +1,4 @@
-// AICheatCode · Content Script v1.3.16
+// AICheatCode · Content Script v1.3.17
 // 跑在 https://labs.google/fx/* 上。任务：进入项目页 → 选模式/模型/画幅/时长 → 填词 → 点生成 → 取媒体。
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const PLACEHOLDER_KEY = 'placeholder';

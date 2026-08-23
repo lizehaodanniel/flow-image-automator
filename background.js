@@ -1,4 +1,4 @@
-// AICheatCode · 后台 Service Worker v1.3.16
+// AICheatCode · 后台 Service Worker v1.3.17
 // 职责：找/开 Flow 标签页 → worker 池把每条提示词派给 content script → 下载（可建文件夹）→ 广播进度（含重试）
 const DOWNLOAD_PREFIX = 'flow_';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
