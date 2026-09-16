@@ -4,6 +4,8 @@ A free, self-hosted browser extension that batch-submits prompts to **Google Flo
 
 **No login. Runs locally. Sends no data to any third party.**
 
+**Latest release: v1.5.22** · [**⬇ Download**](../../releases/latest) · Works in Chrome / Edge / Brave · You need your own Google Flow account (generation uses your own Flow credits).
+
 ---
 
 ## ✨ Features
@@ -20,7 +22,7 @@ A free, self-hosted browser extension that batch-submits prompts to **Google Flo
 
 ## 📦 Install (free, ~30 seconds)
 
-1. Download `AICheatCode-vX.Y.Z.zip` from the [Releases](../../releases) page and unzip it to a **permanent location** (don't move or delete it later, or the extension will break).
+1. **Download** — either grab the newest `AICheatCode-vX.Y.Z.zip` from the [**Releases** page](../../releases), or use the green **Code ▸ Download ZIP** button at the top of this repo page (same files either way). Unzip it to a **permanent location** (don't move or delete it later, or the extension will break).
 2. Open `chrome://extensions` in your browser (Edge: `edge://extensions`, Brave: `brave://extensions`).
 3. Turn on **Developer mode** (top-right).
 4. Click **Load unpacked** and select the unzipped folder (it must contain `manifest.json`).
@@ -45,7 +47,14 @@ Want every generated image to show the **same person**? Use the character refere
 ## ❓ FAQ
 
 **Does the extension request a "debugger" permission?**
-No. Since v1.3.21 the extension no longer requests the `debugger` (Chrome DevTools Protocol) permission. It drives Flow purely with synthetic DOM events (`.click()` / `execCommand` / `KeyboardEvent`), which avoids triggering Flow's anti-debugging ("已经开始调试此浏览器") that used to kick the page out. As an unpacked extension loaded by you, it sends no data anywhere.
+Yes — and it is genuinely required. Since **v1.5.0** the extension drives Flow through Chrome's DevTools Protocol (`chrome.debugger`). Flow's editor is ProseMirror, and it silently rejects synthetic DOM events (`.click()` / `execCommand` / `KeyboardEvent`): the text lands in the DOM but never reaches Flow's internal state, so the Generate button stays grey and nothing happens. CDP sends hardware-level input that Flow cannot tell apart from a real user.
+
+Two side effects you should expect, **both harmless**:
+
+- A yellow **"AICheatCode is debugging this browser"** bar appears at the top of the page while a batch is running. It goes away when the run ends.
+- Chrome may show an **"Errors"** badge on the extension's card in `chrome://extensions`. This is a known false positive caused by the `debugger` session — the extension keeps working normally. Safe to ignore.
+
+CDP is used **only** to type into and click on the Flow page you already have open. Nothing is sent anywhere.
 
 **Does generating videos cost money?**
 The extension itself is free. But **Google Flow charges your own Flow credits** for video/image generation (tied to your Google account — completely independent of this extension). If you run out of credits, video generation will fail; image-only modes are cheaper.
@@ -55,6 +64,17 @@ Go to `chrome://extensions`, find AICheatCode, and click the 🔄 reload button.
 
 **How do I update?**
 Download the new zip, replace the contents of the old folder, then click 🔄 reload on the extension's card.
+
+---
+
+## 📝 Changelog
+
+**v1.5.22** — fixed two batch-run bugs that showed up on long runs:
+- **Duplicate outputs.** The "prompt written successfully" check used a loose substring match, so when the previous prompt had not been fully cleared and the new one got appended after it, the check still passed and the *previous* prompt was submitted a second time. All five write-verification points (plus the check before submit) now require an exact full-text match, tolerant only of whitespace / quote / punctuation differences. A run that would previously produce silent duplicates now reports the mismatch instead.
+- **Generated, but not downloaded.** When the "generation started" signal was not detected, the run aborted early even though Flow had in fact started and the image was already rendered on the page — so it never reached the download step. It now keeps waiting for the result instead of giving up.
+- **The same image downloaded twice.** The result collector no longer scans the instant after clicking (it used to catch the *previous* item's re-rendered blob URL and download that image again), and it now de-duplicates the grid thumbnail against the large preview of the same output.
+
+**v1.5.0** — returned to CDP hardware-level input (see FAQ above). **v1.3.25** and earlier drove Flow with synthetic DOM events, which no longer works on the current Flow editor.
 
 ---
 

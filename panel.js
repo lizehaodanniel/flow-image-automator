@@ -142,6 +142,7 @@ const I18N = {
     'sc.script': '内容脚本',
     'sc.noTab': '未找到',
     'sc.noScript': '未注入',
+    'sc.testFill': '🧪 填词实测',
     'diag.reinjectFail': '自动重新注入失败：{e}。请手动刷新 Flow 页面（F5），或在 chrome://extensions 点 🔄 刷新本扩展后再试。',
     'diag.noScript': '自动重新注入失败（缺少 scripting 权限或被拦截）：{e}。请到 chrome://extensions 确认 AICHeatCode 已启用、版本 ≥ 1.3.25，并刷新 Flow 页面。',
   },
@@ -322,32 +323,101 @@ async function selfCheck() {
   const rows = [ scRow(t('sc.ext'), true, extVer), scRow(t('sc.scripting'), hasScripting, hasScripting ? '' : '✗') ];
   let flowTab = null, tabErr = '';
   try {
-    const tabs = await chrome.tabs.query({ url: 'https://labs.google/fx/*' });
+    const tabs = await chrome.tabs.query({ url: ['https://labs.google/fx/*', 'https://flow.google/*', 'https://flow.google.com/*'] });
     if (tabs && tabs.length) flowTab = tabs[0];
   } catch (e) { tabErr = (e && e.message) || String(e); }
   if (!flowTab) {
-    rows.push(scRow(t('sc.flowTab'), false, t('sc.noTab') + (tabErr ? ' (' + tabErr + ')' : '')));
+    rows.push(scRow(t('sc.flowTab'), false, t('sc.noTab') + (tabErr ? ' (' + tabErr + ')' : '') + ' — 请先打开 flow.google'));
     rows.push(scRow(t('sc.script'), false, t('sc.noScript')));
+    body.innerHTML = rows.join('');
+    return;
+  }
+  rows.push(scRow(t('sc.flowTab'), true, '#' + flowTab.id));
+
+  // Ping 内容脚本（带超时，避免永久挂起）
+  const pingOnce = (tabId) => new Promise((res) => {
+    let done = false;
+    const timer = setTimeout(() => { if (!done) { done = true; res({ err: 'ping-timeout' }); } }, 1500);
+    try {
+      chrome.tabs.sendMessage(tabId, { cmd: 'ping' }, (r) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        if (chrome.runtime.lastError) res({ err: chrome.runtime.lastError.message });
+        else res(r || { err: 'no-response' });
+      });
+    } catch (e) { if (!done) { done = true; clearTimeout(timer); res({ err: (e && e.message) || String(e) }); } }
+  });
+
+  let pr = await pingOnce(flowTab.id);
+  let reinjected = false;
+  let reinjectErr = '';
+
+  // ping 失败 → 自动尝试重新注入内容脚本（这是 v1.4.5 的关键修复）
+  if (!pr || !pr.ok) {
+    if (!hasScripting) {
+      rows.push(scRow(t('sc.script'), false, t('sc.noScript') + '（缺少 scripting 权限）'));
+      body.innerHTML = rows.join('');
+      return;
+    }
+    try {
+      await chrome.scripting.executeScript({ target: { tabId: flowTab.id, allFrames: false }, files: ['content_script.js'] });
+      await new Promise((r) => setTimeout(r, 800)); // 等脚本完成初始化
+      pr = await pingOnce(flowTab.id);
+      reinjected = !!(pr && pr.ok);
+      if (!reinjected) reinjectErr = (pr && pr.err) || '内容脚本仍未响应';
+    } catch (e) {
+      reinjectErr = (e && e.message) || String(e);
+    }
+  }
+
+  if (pr && pr.ok) {
+    const csv = pr.ver || '?';
+    const stale = (csv !== extVer);
+    const det = 'v' + csv + (stale ? (' ⚠️ ≠ 扩展 v' + extVer + '，可能加载了旧版/多份扩展！请移除旧扩展后重新加载') : (reinjected ? (' ✓ 已自动重新注入') : ''));
+    rows.push(scRow(t('sc.script'), !stale, det));
+    if (stale) {
+      rows.push(scRow('⚠️ 版本不一致', false, '内容脚本=' + csv + ' / 扩展清单=' + extVer + '。强烈建议：chrome://extensions → 移除所有 AICHeatCode → 只保留一份 v' + extVer + ' 重新加载。多份扩展会让消息发到错误的脚本，表现为"完全不动"。'));
+    }
+    // v1.4.6：内容脚本在线不等于 setPrompt 可用，必须实测填词——这才是用户最关心的
+    rows.push(scRow('🧪 填词实测', null, '<a href="#" id="testFillBtn" style="color:#4af;text-decoration:underline">点击测试 → 写"身上"两字，看提交按钮是否亮起</a>'));
   } else {
-    rows.push(scRow(t('sc.flowTab'), true, '#' + flowTab.id));
-    const pr = await new Promise((res) => {
-      try {
-        chrome.tabs.sendMessage(flowTab.id, { cmd: 'ping' }, (r) => {
-          if (chrome.runtime.lastError) res({ err: chrome.runtime.lastError.message });
-          else res(r || { err: 'no-response' });
-        });
-      } catch (e) { res({ err: (e && e.message) || String(e) }); }
-    });
-    if (pr && pr.ok) {
-      const csv = pr.ver || '?';
-      const stale = (csv !== extVer);
-      rows.push(scRow(t('sc.script'), !stale, 'v' + csv + (stale ? (' ⚠️ ≠ 扩展 v' + extVer + '，可能加载了旧版/多份扩展！请移除旧扩展后重新加载') : '')));
-      if (stale) {
-        rows.push(scRow('⚠️ 版本不一致', false, '内容脚本=' + csv + ' / 扩展清单=' + extVer + '。强烈建议：chrome://extensions → 移除所有 AICHeatCode → 只保留一份 v' + extVer + ' 重新加载。多份扩展会让消息发到错误的脚本，表现为“完全不动”。'));
-      }
-    } else rows.push(scRow(t('sc.script'), false, (pr && pr.err) || t('sc.noScript')));
+    const det = (reinjectErr || (pr && pr.err) || t('sc.noScript')) +
+      '。可能原因：① Flow 标签页 URL 不是 flow.google（请打开 flow.google 主站）② 加载了旧版/多份扩展 ③ Flow 页面有 CSP 拦截注入。';
+    rows.push(scRow(t('sc.script'), false, det + ' <a href="#" id="reinjectLink" style="color:#4af;text-decoration:underline;margin-left:6px">🔄 再试一次</a>'));
   }
   body.innerHTML = rows.join('');
+  // 绑定「再试一次」链接
+  const link = $('reinjectLink');
+  if (link) link.addEventListener('click', (e) => { e.preventDefault(); selfCheck(); });
+  // 绑定「填词实测」按钮
+  const tfBtn = $('testFillBtn');
+  if (tfBtn) {
+    tfBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      tfBtn.textContent = '测试中…';
+      tfBtn.style.color = '#888';
+      try {
+        const r = await new Promise((res) => {
+          chrome.tabs.sendMessage(flowTab.id, { cmd: 'testFill', text: '身上' }, (resp) => {
+            if (chrome.runtime.lastError) res({ ok: false, error: chrome.runtime.lastError.message });
+            else res(resp || { ok: false, error: '无响应' });
+          });
+        });
+        if (r && r.ok && r.domHasTest && r.ariaDisabled !== 'true') {
+          tfBtn.outerHTML = '<span style="color:#3a3">✓ 填词成功 + 按钮亮起（aria-disabled=' + (r.ariaDisabled || 'null') + '）</span>';
+        } else if (r && r.ok && r.domHasTest) {
+          tfBtn.outerHTML = '<span style="color:#c84">⚠ DOM 有字但按钮仍 aria-disabled=' + (r.ariaDisabled || 'null') + '（v1.4.6 四策略仍被拒，需手动输入唤醒）</span>';
+        } else if (r && r.ok && !r.domHasTest) {
+          tfBtn.outerHTML = '<span style="color:#c84">✗ DOM 未含提示词（v1.4.6 四策略写入失败）。当前 DOM="' + (r.domText || '').slice(0, 30) + '"</span>';
+        } else {
+          tfBtn.outerHTML = '<span style="color:#c44">✗ ' + (r.error || '未知错误') + '</span>';
+        }
+      } catch (err) {
+        tfBtn.outerHTML = '<span style="color:#c44">✗ ' + (err && err.message || err) + '</span>';
+      }
+    });
+  }
 }
 
 // ---------- 标签切换 ----------
@@ -634,6 +704,7 @@ pingBg((ok) => setConn(ok ? 'ok' : 'fail'));
 
 // v1.3.17: 批量运行期间每 20s 给后台发一次心跳，防止 MV3 service worker 30s 不活动被回收
 let heartbeatTimer = null;
+let currentRunId = null;
 function startHeartbeat() {
   stopHeartbeat();
   heartbeatTimer = setInterval(() => {
@@ -660,8 +731,9 @@ startBtn.addEventListener('click', () => {
     stopBtn.disabled = false;
     saveState();
 
+    currentRunId = (crypto.randomUUID ? crypto.randomUUID() : ('run-' + Date.now() + '-' + Math.random().toString(36).slice(2)));
     chrome.runtime.sendMessage(
-      { cmd: 'startBatch', prompts, options: readOptions() },
+      { cmd: 'startBatch', prompts, options: readOptions(), runId: currentRunId },
       (resp) => {
         if (chrome.runtime.lastError || !resp || !resp.ok) {
           setStatus(t('st.connFail'), 'err');
@@ -684,7 +756,7 @@ startBtn.addEventListener('click', () => {
 
 stopBtn.addEventListener('click', () => {
   setStatus(t('st.stopReq'));
-  try { chrome.runtime.sendMessage({ cmd: 'stopBatch' }); } catch (_) {}
+  try { chrome.runtime.sendMessage({ cmd: 'stopBatch', runId: currentRunId }); } catch (_) {}
 });
 
 // 「复制页面诊断」按钮：把 Flow 页面真实结构复制到剪贴板，无需打开 DevTools
@@ -693,7 +765,7 @@ if (copyPageDiag) {
   copyPageDiag.addEventListener('click', async () => {
     setStatus(t('st.reading'), 'busy');
     try {
-      const tabs = await chrome.tabs.query({ url: 'https://labs.google/fx/*' });
+      const tabs = await chrome.tabs.query({ url: ['https://labs.google/fx/*', 'https://flow.google/*', 'https://flow.google.com/*'] });
       if (!tabs.length) {
         setStatus(t('st.noFlow'), 'err');
         selfCheck();
@@ -779,6 +851,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     }
     setStatus(msg.ok ? t('st.done', { i: msg.index + 1, n: items.length }) : t('st.failed', { i: msg.index + 1 }), msg.ok ? 'busy' : 'err');
   } else if (msg.type === 'batchEnd') {
+    currentRunId = null;
     startBtn.disabled = false;
     stopBtn.disabled = true;
     setStatus(msg.stopped ? t('st.stopped') : t('st.allDone'), msg.stopped ? '' : 'ok');

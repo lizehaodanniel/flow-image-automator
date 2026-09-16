@@ -1,22 +1,41 @@
 {
   "manifest_version": 3,
   "name": "AICheatCode",
-  "version": "1.3.25",
-  "description": "批量向 Google Flow 提交提示词，自动生成并下载图片/视频。免费自托管版：多模式（文生图/文生视频/图生视频/成分动画/图生图）、画幅/模型/时长、重试、随机延迟、按项目建文件夹。v1.3.20 修「固定角色参考图上传卡住」：文件注入改用原生 files setter 更兼容 React；上传成功判定放宽（新 img/缩略图 div/已注入 input 均算成功）。v1.3.21 彻底移除 chrome.debugger / CDP 真实输入引擎——其会触发 Flow 反调试（页面闪「已经开始调试此浏览器」并踢出/重载）导致扩展完全不动；现已回归 v1.6/v1.7 纯合成事件驱动（.click() / execCommand / KeyboardEvent），实测可用。v1.3.22 恢复 scripting 权限——侧边栏在内容脚本失效时自动重新注入，无需手动刷新 Flow 页面。v1.3.23 侧边栏新增自检卡片：扩展版本 / Flow 标签 / 内容脚本在线状态 / scripting 权限一目了然，复制诊断失败会给出具体原因。v1.3.24 彻底重构图片上传：修复「多文件逐个注入互相覆盖、只剩最后一张」的真根因（改为一次性注入整组文件），并新增逐步诊断日志与明确的可操作结论（Flow 新版上传可能依赖原生文件框、扩展无法自动填充时，引导改用「文生图」或先手动上传参考图）。v1.3.25 文生图也「完全不动」→ 真根因在共享驱动链路：generateOne 全程加执行轨迹日志（[Flow] 前缀，失败时随诊断返回，一眼看出卡在 进画布/填词/提交/等结果）；setPrompt 增 beforeinput 事件兜底 + 写后检测提交按钮是否变可用；clickGenerate 不再因按钮 disabled 而静默放弃；自检卡片新增「内容脚本版本 vs 扩展版本」不一致告警（多为加载了旧版/多份扩展）。",
-  "permissions": ["downloads", "storage", "tabs", "sidePanel", "scripting", "alarms"],
+  "version": "1.5.22",
+  "description": "批量向 Google Flow 提交提示词，自动生成并下载图片/视频。免费自托管版：多模式（文生图/文生视频/图生视频/成分动画/图生图）、画幅/模型/时长、重试、随机延迟、按项目建文件夹。v1.3.20 修「固定角色参考图上传卡住」：文件注入改用原生 files setter 更兼容 React；上传成功判定放宽（新 img/缩略图 div/已注入 input 均算成功）。v1.3.21 彻底移除 chrome.debugger / CDP 真实输入引擎——其会触发 Flow 反调试（页面闪「已经开始调试此浏览器」并踢出/重载）导致扩展完全不动；现已回归 v1.6/v1.7 纯合成事件驱动（.click() / execCommand / KeyboardEvent），实测可用。v1.3.22 恢复 scripting 权限——侧边栏在内容脚本失效时自动重新注入，无需手动刷新 Flow 页面。v1.3.23 侧边栏新增自检卡片：扩展版本 / Flow 标签 / 内容脚本在线状态 / scripting 权限一目了然，复制诊断失败会给出具体原因。v1.3.24 彻底重构图片上传：修复「多文件逐个注入互相覆盖、只剩最后一张」的真根因（改为一次性注入整组文件），并新增逐步诊断日志与明确的可操作结论（Flow 新版上传可能依赖原生文件框、扩展无法自动填充时，引导改用「文生图」或先手动上传参考图）。v1.3.25 文生图也「完全不动」→ 真根因在共享驱动链路：generateOne 全程加执行轨迹日志（[Flow] 前缀，失败时随诊断返回，一眼看出卡在 进画布/填词/提交/等结果）；setPrompt 增 beforeinput 事件兜底 + 写后检测提交按钮是否变可用；clickGenerate 不再因按钮 disabled 而静默放弃；自检卡片新增「内容脚本版本 vs 扩展版本」不一致告警（多为加载了旧版/多份扩展）。v1.4.2 修正 v1.4.0/1.4.1 的致命回退：它们把填词/提交/新建项目重新改回 chrome.debugger(CDP) 受信任输入，而 CDP attach 会触发 Flow 反调试导致页面被踢出、扩展完全不动（文生图/图生图都不触发）；现已彻底移除 CDP，全部改回内容脚本纯合成事件驱动，并移除 manifest 的 debugger 权限。v1.4.3 修「几十次都不行」的真正元凶：扩展的内容脚本匹配与标签页查询只认旧域名 https://labs.google/fx/*，而 Google 现已把 Flow 主入口迁到 flow.google——于是内容脚本从不注入、标签页也查不到，导致「文生图不动 / 图生图不动 / 复制诊断也复制不了」同时发生。现同时匹配 labs.google/fx/* 与 flow.google/*（及 flow.google.com/*），host_permissions 同步放宽。v1.4.4 修「提示词进框了但 Flow 说没提示词、提交按钮灰色」的真根因：Flow 的提示词框是 Slate 编辑器（底层 div[role=textbox]，文本挂在 [data-slate-string] 节点），旧 setPrompt 的兜底 innerText=text 会破坏 Slate 的 DOM 结构、导致 React state 收不到输入、提交按钮保持 aria-disabled=true。现改为「粘贴事件 / 直写 slate-string 节点 + beforeinput / execCommand」三策略，并以 aria-disabled==='true' 作为按钮可用的真正判定，每步打日志，失败抛可定位错误。v1.4.5 修「自检卡片内容脚本红 X、复制诊断复制不上」的根因：旧 selfCheck 只发 ping 不自动恢复，红 X 一直挂着用户只能手动刷 Flow 页面；现改为 ping 失败时自动 chrome.scripting.executeScript 重新注入内容脚本并复 ping，注入成功会显式标注「✓ 已自动重新注入」，注入失败给出具体错误并附「🔄 再试一次」一键重试链接，ping 加 1.5s 超时避免永久挂起。v1.4.6 修「v1.4.4 三策略仍被 Slate 拒、按钮 aria-disabled=true 一直挂」的真根因：v1.4.4 的 paste / slate-string + beforeinput / execCommand 在 Flow 新版 Slate 上仍全部失败（用户实测「手动打'身上'两字按钮就亮，扩展写完整段按钮就是灰」），说明 Slate 只接受与真实键盘事件序列一致的输入。现改为四策略：IME 组合输入（compositionstart/update/end + insertCompositionText，Slate 有专用通路）→ Range 直写文本节点 + insertText beforeinput → 字符级键盘模拟（keydown/beforeinput/input/keyup，每字符 ≤3ms）→ execCommand 兜底；清空编辑器也改用直接 DOM 操作（移除所有子节点+加空文本节点），不再依赖可能失效的 execCommand selectAll+delete。同时新增 testFill 命令与自检卡片「🧪 填词实测」按钮——直接测试 setPrompt 是否真能让按钮亮起，不再只看「内容脚本在线」这种弱信号。v1.4.7 修「箭头亮了（v1.4.6 setPrompt 成功）但点击不触发 Flow 生成」：原 clickGenerate 只用 .click() 单事件派发，Flow 提交 handler 多监听 mousedown/mouseup/click 完整序列或 button 焦点态下的 Enter。现改为五重提交：①聚焦按钮 + Enter on button（keydown/keypress/keyup ×2）②Enter on textbox ③全鼠标序列点击（pointerdown + mousedown + pointerup + mouseup + click，带真实坐标）④兜底点最近可点击父元素 ⑤最后 .click()。覆盖监听任一种事件序列的框架。v1.4.8 修「v1.4.7 五重提交（全鼠标序列+Enter）仍不触发 Flow 生成」：真根因是 Flow 提示词框是 Slate 编辑器，所有合成事件（粘贴/beforeinput/execCommand/字符级键盘/全鼠标序列）只能改 DOM、改不进 Flow 的 React state，提交时 Flow 读空 state 于是无反应（箭头变白只是 DOM 视觉，state 仍空）。现上最激进方案：①setPrompt 策略0 走 React fiber（__reactFiber$KEY / __reactInternalInstance$KEY）从 textbox DOM 向上找 Slate 的 editor 实例（memoizedProps.editor 或 stateNode.editor），clearSlateEditor 清空后调 editor.insertText(text) 直接写进 React state；②clickGenerate 策略0 找按钮 fiber 上的 memoizedProps.onClick 直接调用，绕过整个事件系统。自检卡片「🧪 填词实测」持续可用；若策略0日志报「未找到 Slate editor 实例 / 未找到 React onClick」需据此进一步适配 fiber 路径。v1.5.0 重大方向修正（基于 GitHub 开源参考）：之前 v1.3.21/v1.4.2 移除 chrome.debugger/CDP 是误判——开源 Flow-Auto-Prompter / AutoFlow-Pro 均在 Google Flow 上用 CDP 稳定驱动，且用户确认\"能用时页面有 aicheatcode 正在调用页面 横幅\"= 调试横幅（不会踢出页面）。真正根因是 Slate 只接受硬件级真实输入，合成事件（粘贴/execCommand/字符键盘/全鼠标序列/直接调 React fiber）全被拒——直接调 fiber 写 editor.insertText/onClick 还会破坏 Flow 的 React 树导致\"Application error: a client-side exception\"。现回归 CDP：background 持有 debugger，setPrompt 经 Input.insertText（聚焦+Ctrl+A 删除+键入）、clickGenerate 经 Input.dispatchMouseEvent 真实点击，React/Slate 无法拦截，是唯一能写进 React state 的方式；CDP 不可用时退化为合成事件。manifest 重新声明 debugger 权限。",
+  "permissions": [
+    "downloads",
+    "storage",
+    "tabs",
+    "sidePanel",
+    "scripting",
+    "alarms",
+    "clipboardWrite",
+    "debugger"
+  ],
   "host_permissions": [
     "https://labs.google/*",
+    "https://flow.google/*",
+    "https://flow.google.com/*",
     "https://*.googleusercontent.com/*"
   ],
   "background": {
     "service_worker": "background.js"
   },
-  "content_scripts": [{
-    "matches": ["https://labs.google/fx/*"],
-    "js": ["content_script.js"],
-    "run_at": "document_idle",
-    "all_frames": false
-  }],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://labs.google/fx/*",
+        "https://flow.google/*",
+        "https://flow.google.com/*"
+      ],
+      "js": [
+        "content_script.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
   "side_panel": {
     "default_path": "panel.html"
   },

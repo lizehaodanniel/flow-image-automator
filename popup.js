@@ -10,6 +10,7 @@ const modeInput = $('mode');
 const modeNote = $('modeNote');
 
 let items = [];
+let currentRunId = null;
 
 const MODE_NOTES = {
   text2video: '',
@@ -74,8 +75,13 @@ function renderItem(it) {
     if (!listEl.children.length) listEl.innerHTML = '<li class="empty">暂无任务</li>';
   });
   li.appendChild(dot); li.appendChild(text); li.appendChild(rm);
+  const diag = document.createElement('details');
+  diag.className = 'diag'; diag.hidden = true;
+  const summary = document.createElement('summary'); summary.textContent = '查看失败诊断';
+  const pre = document.createElement('pre');
+  diag.appendChild(summary); diag.appendChild(pre); li.appendChild(diag);
   listEl.appendChild(li);
-  it.li = li; it.textEl = text;
+  it.li = li; it.textEl = text; it.diagEl = pre; it.diagWrapEl = diag;
 }
 function resetUi() {
   items = [];
@@ -162,8 +168,9 @@ startBtn.addEventListener('click', () => {
     stopBtn.disabled = false;
     saveState();
 
+    currentRunId = (crypto.randomUUID ? crypto.randomUUID() : ('run-' + Date.now() + '-' + Math.random().toString(36).slice(2)));
     chrome.runtime.sendMessage(
-      { cmd: 'startBatch', prompts, options: readOptions() },
+      { cmd: 'startBatch', prompts, options: readOptions(), runId: currentRunId },
       (resp) => {
         if (chrome.runtime.lastError || !resp || !resp.ok) {
           setStatus('连不上后台。请到 chrome://extensions 找到「AICheatCode」点 🔄 刷新后再试。', 'err');
@@ -181,7 +188,7 @@ startBtn.addEventListener('click', () => {
 
 stopBtn.addEventListener('click', () => {
   setStatus('已请求停止…');
-  try { chrome.runtime.sendMessage({ cmd: 'stopBatch' }); } catch (_) {}
+  try { chrome.runtime.sendMessage({ cmd: 'stopBatch', runId: currentRunId }); } catch (_) {}
 });
 
 $('openPanel').addEventListener('click', async () => {
@@ -212,9 +219,14 @@ chrome.runtime.onMessage.addListener((msg) => {
         const suffix = msg.ok ? `✓ ${msg.count} 张` : `✗ ${msg.error || ''}`;
         it.textEl.textContent = `[${msg.index + 1}] ${it.prompt} — ${suffix}`;
       }
+      if (!msg.ok && it.diagEl && msg.diagnostic) {
+        it.diagEl.textContent = msg.diagnostic;
+        it.diagWrapEl.hidden = false;
+      }
     }
     setStatus(msg.ok ? `完成 ${msg.index + 1}/${items.length}` : `失败 ${msg.index + 1}`, msg.ok ? 'busy' : 'err');
   } else if (msg.type === 'batchEnd') {
+    currentRunId = null;
     startBtn.disabled = false; stopBtn.disabled = true;
     setStatus(msg.stopped ? '已停止' : '全部完成 ✓', msg.stopped ? '' : 'ok');
   } else if (msg.type === 'error') {
